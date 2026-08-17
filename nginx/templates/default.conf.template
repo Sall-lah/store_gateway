@@ -1,0 +1,118 @@
+# API Gateway Virtual Host Template
+# Explain 'Why': Template is processed by NGINX envsubst at container startup to dynamically inject service addresses.
+
+server {
+    listen ${GATEWAY_PORT} default_server;
+    listen [::]:${GATEWAY_PORT} default_server;
+    server_name _;
+
+    # Explain 'Why': Include baseline security headers across all responses.
+    include /etc/nginx/snippets/security-headers.conf;
+
+    # -------------------------------------------------------------------------
+    # Health Check Endpoint
+    # -------------------------------------------------------------------------
+    # Explain 'Why': Provides container orchestrators and load balancers a direct status probe without hitting downstream services.
+    location = /health {
+        access_log off;
+        default_type application/json;
+        return 200 '{"status":"UP","service":"store_gateway"}\n';
+    }
+
+    # -------------------------------------------------------------------------
+    # Auth Service Endpoints
+    # -------------------------------------------------------------------------
+    # Explain 'Why': Routes /api/auth/* to the store_auth microservice while applying CORS, anti-spoofing, and proxy headers.
+    location /api/auth/ {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${AUTH_SERVICE_URL}/api/auth/;
+    }
+
+    # Explain 'Why': Public RS256 JWKS key distribution endpoint consumed by frontend and downstream microservices.
+    location = /.well-known/jwks.json {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${AUTH_SERVICE_URL}/.well-known/jwks.json;
+    }
+
+    # -------------------------------------------------------------------------
+    # Product Service Endpoints
+    # -------------------------------------------------------------------------
+    # Explain 'Why': Routes /api/products/* to product_service while applying CORS, anti-spoofing, and proxy headers.
+    location /api/products {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${PRODUCT_SERVICE_URL}/api/products;
+    }
+
+    # -------------------------------------------------------------------------
+    # Documentation & OpenAPI Specs Proxy
+    # -------------------------------------------------------------------------
+    # Root documentation index
+    location = /docs {
+        default_type text/html;
+        return 200 '<!DOCTYPE html><html><head><title>Store API Documentation Hub</title><style>body{font-family:sans-serif;max-width:800px;margin:40px auto;line-height:1.6;padding:0 20px;}h1{color:#1a73e8;}a{color:#1a73e8;text-decoration:none;}a:hover{text-decoration:underline;}ul{list-style-type:none;padding:0;}li{margin:12px 0;padding:12px;border:1px solid #e0e0e0;border-radius:6px;}</style></head><body><h1>Store API Documentation Hub</h1><ul><li><strong>Product Service (Modern Scalar UI):</strong> <a href="/docs/products/scalar/">/docs/products/scalar/</a></li><li><strong>Product Service (Swagger UI):</strong> <a href="/docs/products/swagger/">/docs/products/swagger/</a></li><li><strong>Product Service OpenAPI Specs:</strong> <a href="/docs/products/openapi.json">openapi.json</a> | <a href="/docs/products/openapi.yaml">openapi.yaml</a></li><li><strong>Auth Service (Swagger UI):</strong> <a href="/docs/auth/">/docs/auth/</a></li><li><strong>Auth Service OpenAPI Spec:</strong> <a href="/docs/auth/openapi.yaml">openapi.yaml</a></li><li><strong>Auth Public JWKS:</strong> <a href="/.well-known/jwks.json">/.well-known/jwks.json</a></li></ul></body></html>\n';
+    }
+
+    # Auth Service Documentation
+    location = /docs/auth {
+        return 302 /docs/auth/;
+    }
+
+    location /docs/auth/ {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${AUTH_SERVICE_URL}/docs/;
+    }
+
+    location = /docs/auth/openapi.yaml {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${AUTH_SERVICE_URL}/docs/openapi.yaml;
+    }
+
+    # Product Service Documentation
+    location = /docs/products/scalar {
+        return 302 /docs/products/scalar/;
+    }
+
+    location /docs/products/scalar/ {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${PRODUCT_SERVICE_URL}/docs/;
+    }
+
+    location = /docs/products/swagger {
+        return 302 /docs/products/swagger/;
+    }
+
+    location /docs/products/swagger/ {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${PRODUCT_SERVICE_URL}/swagger/;
+    }
+
+    location = /docs/products/openapi.json {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${PRODUCT_SERVICE_URL}/openapi.json;
+    }
+
+    location = /docs/products/openapi.yaml {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${PRODUCT_SERVICE_URL}/openapi.yaml;
+    }
+}

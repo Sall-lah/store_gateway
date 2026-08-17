@@ -1,0 +1,26 @@
+# Docker Compose for Store Gateway
+# Explain 'Why': Orchestrates gateway deployment and links it to the shared microservice bridge network.
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: store_gateway
+    restart: unless-stopped
+    ports:
+      - "${GATEWAY_PORT:-80}:80"
+    environment:
+      - GATEWAY_PORT=80
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8080}
+      - PRODUCT_SERVICE_URL=${PRODUCT_SERVICE_URL:-http://product-service:8040}
+    volumes:
+      # Optional live-reload volume mounts for local NGINX template tweaking
+      - ./nginx/templates:/etc/nginx/templates:ro
+      - ./nginx/snippets:/etc/nginx/snippets:ro
+    networks:
+      - store-network
+
+networks:
+  # Explain 'Why': Shared bridge network allows gateway to resolve auth-service, product-service, and redis containers by service name.
+  store-network:
+    name: store-network

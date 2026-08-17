@@ -1,0 +1,20 @@
+# Git and Agent
+.git/
+.agent/
+.github/
+
+# Environment files
+.env
+.env.*
+*.pem
+*.key
+
+# Documentation & planning
+openspec/
+README.md
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
