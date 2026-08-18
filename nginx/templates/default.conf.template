@@ -10,6 +10,27 @@ server {
     include /etc/nginx/snippets/security-headers.conf;
 
     # -------------------------------------------------------------------------
+    # Internal Auth Subrequest Verification
+    # -------------------------------------------------------------------------
+    # Explain 'Why': Evaluates JWT tokens/cookies against store_auth to authenticate callers.
+    # Read-only and preflight methods (GET, HEAD, OPTIONS) pass through without requiring credentials.
+    location = /_auth_verify {
+        internal;
+        if ($request_method ~ ^(GET|HEAD|OPTIONS)$) {
+            return 200;
+        }
+
+        proxy_pass ${AUTH_SERVICE_URL}/api/auth/me;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Original-URI $request_uri;
+        proxy_set_header X-Original-Method $request_method;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header Cookie $http_cookie;
+        proxy_set_header X-Request-ID $req_id;
+    }
+
+    # -------------------------------------------------------------------------
     # Health Check Endpoint
     # -------------------------------------------------------------------------
     # Explain 'Why': Provides container orchestrators and load balancers a direct status probe without hitting downstream services.
@@ -42,13 +63,32 @@ server {
     # -------------------------------------------------------------------------
     # Product Service Endpoints
     # -------------------------------------------------------------------------
-    # Explain 'Why': Routes /api/products/* to product_service while applying CORS, anti-spoofing, and proxy headers.
-    location /api/products {
+    # Explain 'Why': Routes /api/products/* and /api/v1/products/* to product_service while applying CORS, auth offload, and proxy headers.
+    location /api/products/ {
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/auth-offload.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${PRODUCT_SERVICE_URL}/api/products;
+        proxy_pass ${PRODUCT_SERVICE_URL}/api/v1/products/;
+    }
+
+    location = /api/products {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/auth-offload.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${PRODUCT_SERVICE_URL}/api/v1/products;
+    }
+
+    location /api/v1/products {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/auth-offload.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${PRODUCT_SERVICE_URL}/api/v1/products;
     }
 
     # -------------------------------------------------------------------------

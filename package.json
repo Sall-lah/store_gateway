@@ -1,0 +1,23 @@
+{
+  "name": "store_gateway",
+  "version": "1.0.0",
+  "description": "NGINX API Gateway for Store Microservices",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "test:auth": "node --test tests/auth-flow.test.mjs",
+    "test:spec": "node --test tests/gateway-spec.test.mjs"
+  },
+  "keywords": [
+    "nginx",
+    "api-gateway",
+    "microservices",
+    "docker",
+    "cors",
+    "auth",
+    "jwks",
+    "rs256"
+  ],
+  "author": "",
+  "license": "MIT"
+}
