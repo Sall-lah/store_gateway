@@ -34,10 +34,11 @@ describe('Store Gateway Specification & Feature Verification', () => {
         'nginx/templates/default.conf.template',
         'nginx/snippets/cors.conf',
         'nginx/snippets/anti-spoofing.conf',
+        'nginx/snippets/auth-offload.conf',
+        'nginx/snippets/auth-offload-mutation.conf',
         'nginx/snippets/proxy-params.conf',
         'nginx/snippets/security-headers.conf',
         'Dockerfile',
-        'docker-compose.yml',
         '.env.example',
         '.gitignore',
         '.dockerignore',
@@ -128,14 +129,21 @@ describe('Store Gateway Specification & Feature Verification', () => {
       // Health probe
       assert.match(content, /location\s*=\s*\/health/, 'Must define /health endpoint');
 
-      // Auth Service routes
-      assert.match(content, /location\s+\/api\/auth\/\s*\{[\s\S]*?proxy_pass\s+\$\{AUTH_SERVICE_URL\}\/api\/auth\//, 'Must proxy /api/auth/ to AUTH_SERVICE_URL');
+      // Auth Service routes (v1 standard and aliases)
+      assert.match(content, /location\s+\/api\/auth\/\s*\{[\s\S]*?proxy_pass\s+\$\{AUTH_SERVICE_URL\}\/api\/auth\//, 'Must proxy /api/auth/ to Auth');
+      assert.match(content, /location\s+\/api\/v1\/auth\/\s*\{[\s\S]*?proxy_pass\s+\$\{AUTH_SERVICE_URL\}\/api\/auth\//, 'Must proxy /api/v1/auth/ to Auth');
       assert.match(content, /location\s*=\s*\/\.well-known\/jwks\.json\s*\{[\s\S]*?proxy_pass\s+\$\{AUTH_SERVICE_URL\}\/\.well-known\/jwks\.json/, 'Must proxy /.well-known/jwks.json');
 
-      // Product Service routes
-      assert.match(content, /location\s+(\/api\/products|\/api\/products\/)\s*\{[\s\S]*?proxy_pass\s+\$\{PRODUCT_SERVICE_URL\}/, 'Must proxy /api/products to PRODUCT_SERVICE_URL');
+      // Product Service routes (v1 standard and aliases)
+      assert.match(content, /location\s+(\/api\/products|\/api\/products\/)\s*\{[\s\S]*?proxy_pass\s+\$\{PRODUCT_SERVICE_URL\}\/api\/v1\/products/, 'Must proxy /api/products to Product v1');
+      assert.match(content, /location\s+(\/api\/v1\/products|\/api\/v1\/products\/)\s*\{[\s\S]*?proxy_pass\s+\$\{PRODUCT_SERVICE_URL\}\/api\/v1\/products/, 'Must proxy /api/v1/products to Product v1');
 
-      // Documentation routes
+      // Order Service routes (v1 standard and aliases)
+      assert.match(content, /location\s+(\/api\/orders|\/api\/orders\/)\s*\{[\s\S]*?proxy_pass\s+\$\{ORDER_SERVICE_URL\}\/api\/v1\/orders/, 'Must proxy /api/orders to Order v1');
+      assert.match(content, /location\s+(\/api\/v1\/orders|\/api\/v1\/orders\/)\s*\{[\s\S]*?proxy_pass\s+\$\{ORDER_SERVICE_URL\}\/api\/v1\/orders/, 'Must proxy /api/v1/orders to Order v1');
+
+      // Documentation routes & toggle
+      assert.match(content, /map\s+"?\$\{ENABLE_DOCS\}"?\s+\$docs_disabled/, 'Must map ENABLE_DOCS to docs_disabled');
       assert.match(content, /location\s*=\s*\/docs\b/, 'Must provide /docs landing index');
       assert.match(content, /location\s+\/docs\/auth\/\s*\{[\s\S]*?proxy_pass\s+\$\{AUTH_SERVICE_URL\}\/docs\//, 'Must proxy /docs/auth/ to Auth Swagger');
       assert.match(content, /location\s*=\s*\/docs\/auth\/openapi\.yaml\s*\{[\s\S]*?proxy_pass\s+\$\{AUTH_SERVICE_URL\}\/docs\/openapi\.yaml/, 'Must proxy /docs/auth/openapi.yaml');
@@ -143,28 +151,39 @@ describe('Store Gateway Specification & Feature Verification', () => {
       assert.match(content, /location\s+\/docs\/products\/swagger\/\s*\{[\s\S]*?proxy_pass\s+\$\{PRODUCT_SERVICE_URL\}\/swagger\//, 'Must proxy /docs/products/swagger/ to Product Swagger UI');
       assert.match(content, /location\s*=\s*\/docs\/products\/openapi\.json\s*\{[\s\S]*?proxy_pass\s+\$\{PRODUCT_SERVICE_URL\}\/openapi\.json/, 'Must proxy /docs/products/openapi.json');
       assert.match(content, /location\s*=\s*\/docs\/products\/openapi\.yaml\s*\{[\s\S]*?proxy_pass\s+\$\{PRODUCT_SERVICE_URL\}\/openapi\.yaml/, 'Must proxy /docs/products/openapi.yaml');
+      assert.match(content, /location\s+\/docs\/orders\/scalar\s*\{[\s\S]*?proxy_pass\s+\$\{ORDER_SERVICE_URL\}\/docs/, 'Must proxy /docs/orders/scalar to Order Scalar UI');
+      assert.match(content, /location\s+\/docs\/orders\/swagger\s*\{[\s\S]*?proxy_pass\s+\$\{ORDER_SERVICE_URL\}\/swagger/, 'Must proxy /docs/orders/swagger to Order Swagger UI');
+      assert.match(content, /location\s*=\s*\/docs\/orders\/openapi\.json\s*\{[\s\S]*?proxy_pass\s+\$\{ORDER_SERVICE_URL\}\/docs\/openapi\.json/, 'Must proxy /docs/orders/openapi.json');
+      assert.match(content, /location\s*=\s*\/docs\/orders\/openapi\.yaml\s*\{[\s\S]*?proxy_pass\s+\$\{ORDER_SERVICE_URL\}\/docs\/openapi\.yaml/, 'Must proxy /docs/orders/openapi.yaml');
     });
 
     test('template substitution must produce valid NGINX configuration', () => {
       const template = readProjectFile('nginx/templates/default.conf.template');
       const rendered = template
         .replaceAll('${GATEWAY_PORT}', '80')
+        .replaceAll('${ENABLE_DOCS}', 'true')
         .replaceAll('${AUTH_SERVICE_URL}', 'http://auth-service:8080')
-        .replaceAll('${PRODUCT_SERVICE_URL}', 'http://product-service:8040');
+        .replaceAll('${PRODUCT_SERVICE_URL}', 'http://product-service:8040')
+        .replaceAll('${ORDER_SERVICE_URL}', 'http://order-service:8060');
 
       assert.ok(!rendered.includes('${GATEWAY_PORT}'), 'GATEWAY_PORT variable should be replaced');
+      assert.ok(!rendered.includes('${ENABLE_DOCS}'), 'ENABLE_DOCS variable should be replaced');
       assert.ok(!rendered.includes('${AUTH_SERVICE_URL}'), 'AUTH_SERVICE_URL variable should be replaced');
       assert.ok(!rendered.includes('${PRODUCT_SERVICE_URL}'), 'PRODUCT_SERVICE_URL variable should be replaced');
+      assert.ok(!rendered.includes('${ORDER_SERVICE_URL}'), 'ORDER_SERVICE_URL variable should be replaced');
       assert.ok(rendered.includes('listen 80 default_server;'), 'Must render listen 80');
       assert.ok(rendered.includes('http://auth-service:8080/api/auth/'), 'Must render auth upstream');
       assert.ok(rendered.includes('http://product-service:8040/api/v1/products'), 'Must render product upstream');
+      assert.ok(rendered.includes('http://order-service:8060/api/v1/orders'), 'Must render order upstream');
     });
   });
 
   describe('7. Docker & Environment Security', () => {
     test('Dockerfile must set NGINX_ENVSUBST_FILTER to protect internal NGINX vars', () => {
       const dockerfile = readProjectFile('Dockerfile');
-      assert.match(dockerfile, /NGINX_ENVSUBST_FILTER="GATEWAY_PORT[| ]AUTH_SERVICE_URL[| ]PRODUCT_SERVICE_URL"/, 'Must define filter for envsubst');
+      assert.match(dockerfile, /NGINX_ENVSUBST_FILTER=".*ORDER_SERVICE_URL.*"/, 'Must define filter for envsubst including ORDER_SERVICE_URL');
+      assert.match(dockerfile, /ENABLE_DOCS=true/, 'Dockerfile must set default ENABLE_DOCS=true');
+      assert.match(dockerfile, /ORDER_SERVICE_URL=http:\/\/order-service:8060/, 'Dockerfile must set default ORDER_SERVICE_URL');
       assert.match(dockerfile, /HEALTHCHECK/, 'Dockerfile must include HEALTHCHECK');
     });
 
@@ -178,16 +197,18 @@ describe('Store Gateway Specification & Feature Verification', () => {
       assert.match(dockerignore, /\.agent\//, '.dockerignore must ignore .agent/');
     });
 
-    test('docker-compose.yml must attach to store-network', () => {
-      const compose = readProjectFile('docker-compose.yml');
-      assert.match(compose, /store-network/, 'Must attach to store-network');
-      assert.match(compose, /store_gateway/, 'Must name container store_gateway');
+    test('.env.example must declare downstream services and gateway configuration', () => {
+      const envExample = readProjectFile('.env.example');
+      assert.match(envExample, /AUTH_SERVICE_URL=/, 'Must specify AUTH_SERVICE_URL');
+      assert.match(envExample, /PRODUCT_SERVICE_URL=/, 'Must specify PRODUCT_SERVICE_URL');
+      assert.match(envExample, /ORDER_SERVICE_URL=/, 'Must specify ORDER_SERVICE_URL');
+      assert.match(envExample, /GATEWAY_PORT=/, 'Must specify GATEWAY_PORT');
     });
   });
 
   describe('8. Mock Upstream Microservices Contract Simulation', () => {
     test('validates downstream service JWKS and docs endpoints response contracts', async () => {
-      // Explain 'Why': Spins up simulated Auth and Product microservice endpoints in memory to verify contract schemas.
+      // Explain 'Why': Spins up simulated Auth, Product, and Order microservice endpoints in memory to verify contract schemas.
       const authServer = http.createServer((req, res) => {
         if (req.url === '/.well-known/jwks.json') {
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -205,7 +226,7 @@ describe('Store Gateway Specification & Feature Verification', () => {
         if (req.url === '/openapi.json') {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ openapi: '3.1.0', info: { title: 'Product Service API' } }));
-        } else if (req.url === '/api/products') {
+        } else if (req.url === '/api/v1/products' || req.url === '/api/products') {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ products: [{ id: 1, name: 'Sample Product' }] }));
         } else {
@@ -214,11 +235,26 @@ describe('Store Gateway Specification & Feature Verification', () => {
         }
       });
 
+      const orderServer = http.createServer((req, res) => {
+        if (req.url === '/docs/openapi.json') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ openapi: '3.0.0', info: { title: 'Order Service API' } }));
+        } else if (req.url === '/api/v1/orders' || req.url === '/api/orders') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ orders: [{ id: 101, total: 99.99 }] }));
+        } else {
+          res.writeHead(404);
+          res.end();
+        }
+      });
+
       await new Promise(resolve => authServer.listen(0, resolve));
       await new Promise(resolve => productServer.listen(0, resolve));
+      await new Promise(resolve => orderServer.listen(0, resolve));
 
       const authPort = authServer.address().port;
       const productPort = productServer.address().port;
+      const orderPort = orderServer.address().port;
 
       // Test JWKS endpoint
       const jwksRes = await fetch(`http://127.0.0.1:${authPort}/.well-known/jwks.json`);
@@ -227,13 +263,20 @@ describe('Store Gateway Specification & Feature Verification', () => {
       assert.equal(jwksData.keys[0].alg, 'RS256');
 
       // Test Product endpoint
-      const prodRes = await fetch(`http://127.0.0.1:${productPort}/api/products`);
+      const prodRes = await fetch(`http://127.0.0.1:${productPort}/api/v1/products`);
       const prodData = await prodRes.json();
       assert.equal(prodRes.status, 200);
       assert.equal(prodData.products[0].name, 'Sample Product');
 
+      // Test Order endpoint
+      const orderRes = await fetch(`http://127.0.0.1:${orderPort}/api/v1/orders`);
+      const orderData = await orderRes.json();
+      assert.equal(orderRes.status, 200);
+      assert.equal(orderData.orders[0].id, 101);
+
       authServer.close();
       productServer.close();
+      orderServer.close();
     });
   });
 

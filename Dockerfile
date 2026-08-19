@@ -3,10 +3,12 @@
 FROM nginx:alpine
 
 # Explain 'Why': NGINX_ENVSUBST_FILTER restricts envsubst to specific variables, preventing corruption of internal NGINX variables ($host, $req_id, etc.).
-ENV NGINX_ENVSUBST_FILTER="GATEWAY_PORT|AUTH_SERVICE_URL|PRODUCT_SERVICE_URL" \
+ENV NGINX_ENVSUBST_FILTER="GATEWAY_PORT|AUTH_SERVICE_URL|PRODUCT_SERVICE_URL|ORDER_SERVICE_URL|ENABLE_DOCS" \
     GATEWAY_PORT=80 \
+    ENABLE_DOCS=true \
     AUTH_SERVICE_URL=http://auth-service:8080 \
-    PRODUCT_SERVICE_URL=http://product-service:8040
+    PRODUCT_SERVICE_URL=http://product-service:8040 \
+    ORDER_SERVICE_URL=http://order-service:8060
 
 # Explain 'Why': Replace default configuration with modular gateway config, snippets, and startup templates.
 RUN rm -rf /etc/nginx/conf.d/* /etc/nginx/templates/*

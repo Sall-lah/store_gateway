@@ -1,6 +1,14 @@
 # API Gateway Virtual Host Template
 # Explain 'Why': Template is processed by NGINX envsubst at container startup to dynamically inject service addresses.
 
+# Map ENABLE_DOCS environment variable (when 'false', '0', or 'off', all documentation endpoints return 404)
+map "${ENABLE_DOCS}" $docs_disabled {
+    "false" 1;
+    "0"     1;
+    "off"   1;
+    default 0;
+}
+
 server {
     listen ${GATEWAY_PORT} default_server;
     listen [::]:${GATEWAY_PORT} default_server;
@@ -12,9 +20,27 @@ server {
     # -------------------------------------------------------------------------
     # Internal Auth Subrequest Verification
     # -------------------------------------------------------------------------
-    # Explain 'Why': Evaluates JWT tokens/cookies against store_auth to authenticate callers.
-    # Read-only and preflight methods (GET, HEAD, OPTIONS) pass through without requiring credentials.
+    # Explain 'Why': Evaluates JWT tokens/cookies against store_auth for user-protected services (e.g. Orders).
+    # Enforces authentication on all non-preflight requests to inject verified X-User-* headers.
     location = /_auth_verify {
+        internal;
+        if ($request_method = OPTIONS) {
+            return 200;
+        }
+
+        proxy_pass ${AUTH_SERVICE_URL}/api/auth/me;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Original-URI $request_uri;
+        proxy_set_header X-Original-Method $request_method;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header Cookie $http_cookie;
+        proxy_set_header X-Request-ID $req_id;
+    }
+
+    # Explain 'Why': Evaluates JWT tokens/cookies for services with public read access (e.g. Products).
+    # Allows GET/HEAD/OPTIONS to pass through anonymously, while mutating methods require valid caller claims.
+    location = /_auth_verify_mutation_only {
         internal;
         if ($request_method ~ ^(GET|HEAD|OPTIONS)$) {
             return 200;
@@ -43,13 +69,37 @@ server {
     # -------------------------------------------------------------------------
     # Auth Service Endpoints
     # -------------------------------------------------------------------------
-    # Explain 'Why': Routes /api/auth/* to the store_auth microservice while applying CORS, anti-spoofing, and proxy headers.
+    # Explain 'Why': Routes /api/auth/* and /api/v1/auth/* to store_auth while applying CORS, anti-spoofing, and proxy headers.
     location /api/auth/ {
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/anti-spoofing.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
         proxy_pass ${AUTH_SERVICE_URL}/api/auth/;
+    }
+
+    location = /api/auth {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${AUTH_SERVICE_URL}/api/auth;
+    }
+
+    location /api/v1/auth/ {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${AUTH_SERVICE_URL}/api/auth/;
+    }
+
+    location = /api/v1/auth {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${AUTH_SERVICE_URL}/api/auth;
     }
 
     # Explain 'Why': Public RS256 JWKS key distribution endpoint consumed by frontend and downstream microservices.
@@ -63,11 +113,11 @@ server {
     # -------------------------------------------------------------------------
     # Product Service Endpoints
     # -------------------------------------------------------------------------
-    # Explain 'Why': Routes /api/products/* and /api/v1/products/* to product_service while applying CORS, auth offload, and proxy headers.
+    # Explain 'Why': Routes /api/products/* and /api/v1/products/* to product_service (v1) while applying CORS, mutation auth offload, and proxy headers.
     location /api/products/ {
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/anti-spoofing.conf;
-        include /etc/nginx/snippets/auth-offload.conf;
+        include /etc/nginx/snippets/auth-offload-mutation.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
         proxy_pass ${PRODUCT_SERVICE_URL}/api/v1/products/;
@@ -76,36 +126,94 @@ server {
     location = /api/products {
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/anti-spoofing.conf;
-        include /etc/nginx/snippets/auth-offload.conf;
+        include /etc/nginx/snippets/auth-offload-mutation.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
         proxy_pass ${PRODUCT_SERVICE_URL}/api/v1/products;
     }
 
-    location /api/v1/products {
+    location /api/v1/products/ {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/auth-offload-mutation.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${PRODUCT_SERVICE_URL}/api/v1/products/;
+    }
+
+    location = /api/v1/products {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/auth-offload-mutation.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${PRODUCT_SERVICE_URL}/api/v1/products;
+    }
+
+    # -------------------------------------------------------------------------
+    # Order Service Endpoints
+    # -------------------------------------------------------------------------
+    # Explain 'Why': Routes /api/orders/* and /api/v1/orders/* to order_service (v1) while applying CORS, anti-spoofing, auth offload, and proxy headers.
+    location /api/orders/ {
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/anti-spoofing.conf;
         include /etc/nginx/snippets/auth-offload.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${PRODUCT_SERVICE_URL}/api/v1/products;
+        proxy_pass ${ORDER_SERVICE_URL}/api/v1/orders/;
+    }
+
+    location = /api/orders {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/auth-offload.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${ORDER_SERVICE_URL}/api/v1/orders;
+    }
+
+    location /api/v1/orders/ {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/auth-offload.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${ORDER_SERVICE_URL}/api/v1/orders/;
+    }
+
+    location = /api/v1/orders {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/auth-offload.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${ORDER_SERVICE_URL}/api/v1/orders;
     }
 
     # -------------------------------------------------------------------------
-    # Documentation & OpenAPI Specs Proxy
+    # Documentation & OpenAPI Specs Proxy (Conditional on ENABLE_DOCS)
     # -------------------------------------------------------------------------
     # Root documentation index
     location = /docs {
+        if ($docs_disabled) {
+            return 404;
+        }
         default_type text/html;
-        return 200 '<!DOCTYPE html><html><head><title>Store API Documentation Hub</title><style>body{font-family:sans-serif;max-width:800px;margin:40px auto;line-height:1.6;padding:0 20px;}h1{color:#1a73e8;}a{color:#1a73e8;text-decoration:none;}a:hover{text-decoration:underline;}ul{list-style-type:none;padding:0;}li{margin:12px 0;padding:12px;border:1px solid #e0e0e0;border-radius:6px;}</style></head><body><h1>Store API Documentation Hub</h1><ul><li><strong>Product Service (Modern Scalar UI):</strong> <a href="/docs/products/scalar/">/docs/products/scalar/</a></li><li><strong>Product Service (Swagger UI):</strong> <a href="/docs/products/swagger/">/docs/products/swagger/</a></li><li><strong>Product Service OpenAPI Specs:</strong> <a href="/docs/products/openapi.json">openapi.json</a> | <a href="/docs/products/openapi.yaml">openapi.yaml</a></li><li><strong>Auth Service (Swagger UI):</strong> <a href="/docs/auth/">/docs/auth/</a></li><li><strong>Auth Service OpenAPI Spec:</strong> <a href="/docs/auth/openapi.yaml">openapi.yaml</a></li><li><strong>Auth Public JWKS:</strong> <a href="/.well-known/jwks.json">/.well-known/jwks.json</a></li></ul></body></html>\n';
+        return 200 '<!DOCTYPE html><html><head><title>Store API Documentation Hub</title><style>body{font-family:sans-serif;max-width:800px;margin:40px auto;line-height:1.6;padding:0 20px;}h1{color:#1a73e8;}a{color:#1a73e8;text-decoration:none;}a:hover{text-decoration:underline;}ul{list-style-type:none;padding:0;}li{margin:12px 0;padding:12px;border:1px solid #e0e0e0;border-radius:6px;}</style></head><body><h1>Store API Documentation Hub</h1><ul><li><strong>Product Service (Modern Scalar UI):</strong> <a href="/docs/products/scalar/">/docs/products/scalar/</a></li><li><strong>Product Service (Swagger UI):</strong> <a href="/docs/products/swagger/">/docs/products/swagger/</a></li><li><strong>Product Service OpenAPI Specs:</strong> <a href="/docs/products/openapi.json">openapi.json</a> | <a href="/docs/products/openapi.yaml">openapi.yaml</a></li><li><strong>Order Service (Modern Scalar UI):</strong> <a href="/docs/orders/scalar">/docs/orders/scalar</a></li><li><strong>Order Service (Swagger UI):</strong> <a href="/docs/orders/swagger">/docs/orders/swagger</a></li><li><strong>Order Service OpenAPI Specs:</strong> <a href="/docs/orders/openapi.json">openapi.json</a> | <a href="/docs/orders/openapi.yaml">openapi.yaml</a></li><li><strong>Auth Service (Swagger UI):</strong> <a href="/docs/auth/">/docs/auth/</a></li><li><strong>Auth Service OpenAPI Spec:</strong> <a href="/docs/auth/openapi.yaml">openapi.yaml</a></li><li><strong>Auth Public JWKS:</strong> <a href="/.well-known/jwks.json">/.well-known/jwks.json</a></li></ul></body></html>\n';
     }
 
     # Auth Service Documentation
     location = /docs/auth {
+        if ($docs_disabled) {
+            return 404;
+        }
         return 302 /docs/auth/;
     }
 
     location /docs/auth/ {
+        if ($docs_disabled) {
+            return 404;
+        }
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
@@ -113,6 +221,9 @@ server {
     }
 
     location = /docs/auth/openapi.yaml {
+        if ($docs_disabled) {
+            return 404;
+        }
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
@@ -120,11 +231,24 @@ server {
     }
 
     # Product Service Documentation
+    location = /docs/products {
+        if ($docs_disabled) {
+            return 404;
+        }
+        return 302 /docs/products/scalar/;
+    }
+
     location = /docs/products/scalar {
+        if ($docs_disabled) {
+            return 404;
+        }
         return 302 /docs/products/scalar/;
     }
 
     location /docs/products/scalar/ {
+        if ($docs_disabled) {
+            return 404;
+        }
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
@@ -132,10 +256,16 @@ server {
     }
 
     location = /docs/products/swagger {
+        if ($docs_disabled) {
+            return 404;
+        }
         return 302 /docs/products/swagger/;
     }
 
     location /docs/products/swagger/ {
+        if ($docs_disabled) {
+            return 404;
+        }
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
@@ -143,6 +273,9 @@ server {
     }
 
     location = /docs/products/openapi.json {
+        if ($docs_disabled) {
+            return 404;
+        }
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
@@ -150,9 +283,63 @@ server {
     }
 
     location = /docs/products/openapi.yaml {
+        if ($docs_disabled) {
+            return 404;
+        }
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
         proxy_pass ${PRODUCT_SERVICE_URL}/openapi.yaml;
+    }
+
+    # Order Service Documentation
+    location = /docs/orders {
+        if ($docs_disabled) {
+            return 404;
+        }
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${ORDER_SERVICE_URL}/docs;
+    }
+
+    location /docs/orders/scalar {
+        if ($docs_disabled) {
+            return 404;
+        }
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${ORDER_SERVICE_URL}/docs;
+    }
+
+    location /docs/orders/swagger {
+        if ($docs_disabled) {
+            return 404;
+        }
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${ORDER_SERVICE_URL}/swagger;
+    }
+
+    location = /docs/orders/openapi.json {
+        if ($docs_disabled) {
+            return 404;
+        }
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${ORDER_SERVICE_URL}/docs/openapi.json;
+    }
+
+    location = /docs/orders/openapi.yaml {
+        if ($docs_disabled) {
+            return 404;
+        }
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${ORDER_SERVICE_URL}/docs/openapi.yaml;
     }
 }
