@@ -8,6 +8,7 @@
 # Agent directory
 .agent/
 openspec
+graphify-out
 
 # OS & Editor files
 .DS_Store
