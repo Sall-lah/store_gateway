@@ -150,6 +150,93 @@ server {
         proxy_pass ${PRODUCT_SERVICE_URL}/api/v1/products;
     }
 
+    # Explain 'Why': External payment provider webhooks (e.g. Midtrans) send unauthenticated notifications that must not be blocked by user auth subrequests.
+    location /api/orders/webhook/ {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${ORDER_SERVICE_URL}/api/v1/orders/webhook/;
+    }
+
+    location /api/v1/orders/webhook/ {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${ORDER_SERVICE_URL}/api/v1/orders/webhook/;
+    }
+
+    # Explain 'Why': Routes /api/admin/orders/* and /api/v1/admin/orders/* to order_service while applying CORS, anti-spoofing, auth offload, and proxy headers.
+    location /api/admin/orders/ {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/auth-offload.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${ORDER_SERVICE_URL}/api/v1/admin/orders/;
+    }
+
+    location = /api/admin/orders {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/auth-offload.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${ORDER_SERVICE_URL}/api/v1/admin/orders;
+    }
+
+    location /api/v1/admin/orders/ {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/auth-offload.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${ORDER_SERVICE_URL}/api/v1/admin/orders/;
+    }
+
+    location = /api/v1/admin/orders {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/auth-offload.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${ORDER_SERVICE_URL}/api/v1/admin/orders;
+    }
+
+    # Explain 'Why': Routes /api/dev/orders/* and /api/v1/dev/orders/* to order_service development testing and simulation endpoints.
+    location /api/dev/orders/ {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${ORDER_SERVICE_URL}/api/v1/dev/orders/;
+    }
+
+    location = /api/dev/orders {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${ORDER_SERVICE_URL}/api/v1/dev/orders;
+    }
+
+    location /api/v1/dev/orders/ {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${ORDER_SERVICE_URL}/api/v1/dev/orders/;
+    }
+
+    location = /api/v1/dev/orders {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${ORDER_SERVICE_URL}/api/v1/dev/orders;
+    }
+
     # -------------------------------------------------------------------------
     # Order Service Endpoints
     # -------------------------------------------------------------------------
