@@ -221,8 +221,29 @@ describe('Gateway Authentication Offloading & Token Verification Suite', () => {
         return;
       }
 
-      // Protected product creation (requires X-User-Role injected by Gateway)
-      if (req.url === '/api/v1/products' && req.method === 'POST') {
+      // Admin product list (requires full auth & X-User-Role injected by Gateway)
+      if (req.url === '/api/v1/admin/products' && req.method === 'GET') {
+        const role = req.headers['x-user-role'] || '';
+        const userId = req.headers['x-user-id'] || '';
+
+        if (!role || (role.toUpperCase() !== 'ADMIN' && role !== 'admin')) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'forbidden', message: 'Admin privileges are required' }));
+          return;
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          products: [{ id: 101, name: 'Mechanical Keyboard', costPrice: 45.0, stock: 150 }],
+          userId: userId,
+          userRole: role,
+          requestId: req.headers['x-request-id'] || null
+        }));
+        return;
+      }
+
+      // Admin / Protected product creation (requires X-User-Role injected by Gateway)
+      if ((req.url === '/api/v1/products' || req.url === '/api/v1/admin/products') && req.method === 'POST') {
         const role = req.headers['x-user-role'] || '';
         const userId = req.headers['x-user-id'] || '';
 
@@ -329,6 +350,66 @@ describe('Gateway Authentication Offloading & Token Verification Suite', () => {
         const proxyReq = http.request({
           host: '127.0.0.1',
           port: authPort,
+          path: targetPath,
+          method: req.method,
+          headers: sanitizedHeaders
+        }, (proxyRes) => {
+          res.writeHead(proxyRes.statusCode, proxyRes.headers);
+          proxyRes.pipe(res);
+        });
+        req.pipe(proxyReq);
+        return;
+      }
+
+      // Routing: Product Service Admin (v1 and alias) - Full Auth Offload
+      if (req.url.startsWith('/api/admin/products') || req.url.startsWith('/api/v1/admin/products')) {
+        const targetPath = req.url.replace(/^\/api\/admin\/products/, '/api/v1/admin/products');
+
+        // Enforce subrequest auth verification on all requests (including GET)
+        const authSubRes = await new Promise((resolve) => {
+          const subReq = http.request({
+            host: '127.0.0.1',
+            port: authPort,
+            path: '/api/v1/auth/me',
+            method: 'GET',
+            headers: {
+              'authorization': req.headers['authorization'] || '',
+              'cookie': req.headers['cookie'] || '',
+              'x-request-id': requestId
+            }
+          }, (authSub) => {
+            resolve(authSub);
+          });
+          subReq.on('error', () => resolve(null));
+          subReq.end();
+        });
+
+        if (!authSubRes || authSubRes.statusCode !== 200) {
+          res.writeHead(401, {
+            'Content-Type': 'application/json',
+            'X-Request-ID': requestId
+          });
+          res.end(JSON.stringify({ error: 'unauthorized', message: 'Authentication required' }));
+          return;
+        }
+
+        const verifiedUserId = authSubRes.headers['x-user-id'] || null;
+        const verifiedUserRole = authSubRes.headers['x-user-role'] || null;
+        const verifiedUserEmail = authSubRes.headers['x-user-email'] || null;
+
+        const sanitizedHeaders = { ...req.headers };
+        delete sanitizedHeaders['x-user-id'];
+        delete sanitizedHeaders['x-user-role'];
+        delete sanitizedHeaders['x-user-email'];
+
+        if (verifiedUserId) sanitizedHeaders['x-user-id'] = verifiedUserId;
+        if (verifiedUserRole) sanitizedHeaders['x-user-role'] = verifiedUserRole;
+        if (verifiedUserEmail) sanitizedHeaders['x-user-email'] = verifiedUserEmail;
+        sanitizedHeaders['x-request-id'] = requestId;
+
+        const proxyReq = http.request({
+          host: '127.0.0.1',
+          port: productPort,
           path: targetPath,
           method: req.method,
           headers: sanitizedHeaders
@@ -605,6 +686,59 @@ describe('Gateway Authentication Offloading & Token Verification Suite', () => {
     assert.equal(res.status, 201);
     const data = await res.json();
     assert.equal(data.orderId, 'ord_created_999');
+    assert.equal(data.userId, 'usr_admin_999');
+    assert.equal(data.userRole, 'ADMIN');
+    assert.ok(data.requestId);
+  });
+
+  test('Step 10: Admin Product Service: Unauthenticated GET /api/v1/admin/products is rejected with 401 at Gateway perimeter', async () => {
+    const res = await fetch(`http://127.0.0.1:${gatewayPort}/api/v1/admin/products`);
+    assert.equal(res.status, 401);
+    const data = await res.json();
+    assert.equal(data.error, 'unauthorized');
+  });
+
+  test('Step 11: Admin Product Service: Authenticated Admin queries products via GET /api/v1/admin/products', async () => {
+    const loginRes = await fetch(`http://127.0.0.1:${gatewayPort}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'admin@example.com', password: 'AdminPass123!' })
+    });
+    const { access_token } = await loginRes.json();
+
+    const res = await fetch(`http://127.0.0.1:${gatewayPort}/api/v1/admin/products`, {
+      headers: {
+        'Authorization': `Bearer ${access_token}`
+      }
+    });
+
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.ok(Array.isArray(data.products));
+    assert.equal(data.userId, 'usr_admin_999');
+    assert.equal(data.userRole, 'ADMIN');
+  });
+
+  test('Step 12: Admin Product Service: Authenticated Admin creates product via POST /api/admin/products alias', async () => {
+    const loginRes = await fetch(`http://127.0.0.1:${gatewayPort}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'admin@example.com', password: 'AdminPass123!' })
+    });
+    const { access_token } = await loginRes.json();
+
+    const res = await fetch(`http://127.0.0.1:${gatewayPort}/api/admin/products`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${access_token}`
+      },
+      body: JSON.stringify({ name: 'Enterprise Server Rack', price: 2999.99 })
+    });
+
+    assert.equal(res.status, 201);
+    const data = await res.json();
+    assert.equal(data.id, 'prod_new_555');
     assert.equal(data.userId, 'usr_admin_999');
     assert.equal(data.userRole, 'ADMIN');
     assert.ok(data.requestId);

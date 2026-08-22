@@ -150,6 +150,43 @@ server {
         proxy_pass ${PRODUCT_SERVICE_URL}/api/v1/products;
     }
 
+    # Explain 'Why': Routes /api/admin/products/* and /api/v1/admin/products/* to product_service while applying CORS, anti-spoofing, auth offload, and proxy headers.
+    location /api/admin/products/ {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/auth-offload.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${PRODUCT_SERVICE_URL}/api/v1/admin/products/;
+    }
+
+    location = /api/admin/products {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/auth-offload.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${PRODUCT_SERVICE_URL}/api/v1/admin/products;
+    }
+
+    location /api/v1/admin/products/ {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/auth-offload.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${PRODUCT_SERVICE_URL}/api/v1/admin/products/;
+    }
+
+    location = /api/v1/admin/products {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/auth-offload.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${PRODUCT_SERVICE_URL}/api/v1/admin/products;
+    }
+
     # Explain 'Why': External payment provider webhooks (e.g. Midtrans) send unauthenticated notifications that must not be blocked by user auth subrequests.
     location /api/orders/webhook/ {
         include /etc/nginx/snippets/cors.conf;

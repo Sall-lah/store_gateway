@@ -38,6 +38,7 @@
              └─────────────────────┘  │  └─────────────────────┘
                                       │
                                       │  /api[/v1]/products/*
+                                      │  /api[/v1]/admin/products/*
                                       │  /docs/products/*
                                       ▼
                         ┌─────────────────────┐
@@ -45,6 +46,7 @@
                         │(product-service:8040│
                         ├─────────────────────┤
                         │ • Product Catalog   │
+                        │ • Admin Products    │
                         │ • Offloaded Auth    │
                         │ • Scalar & Swagger  │
                         └─────────────────────┘
@@ -110,6 +112,7 @@ sequenceDiagram
 | `ALL /api/v1/auth/*` (or `/api/auth/*`) | `ANY` | `${AUTH_SERVICE_URL}/api/auth/*` | Public / Self-enforced | Login, register, token refresh cookies, user profile |
 | `GET /.well-known/jwks.json` | `GET, OPTIONS` | `${AUTH_SERVICE_URL}/.well-known/jwks.json` | Public | RS256 JWKS public key set for token verification |
 | `ALL /api/v1/products/*` (or `/api/products/*`) | `ANY` | `${PRODUCT_SERVICE_URL}/api/v1/products/*` | Mutation-Only Auth | Product catalog: `GET/HEAD` public; `POST/PUT/DELETE` require auth |
+| `ALL /api/v1/admin/products/*` (or `/api/admin/products/*`) | `ANY` | `${PRODUCT_SERVICE_URL}/api/v1/admin/products/*` | Full Auth Offload | Admin product management: all methods require verified caller identity |
 | `ALL /api/v1/orders/*` (or `/api/orders/*`) | `ANY` | `${ORDER_SERVICE_URL}/api/v1/orders/*` | Full Auth Offload | Order processing: all mutations require verified caller identity |
 | `GET /docs` | `GET` | *Gateway Internal* | Conditional (`ENABLE_DOCS`) | Unified API Documentation Hub landing page (HTML) |
 | `GET /docs/auth` | `GET` | `${AUTH_SERVICE_URL}/docs/` | Conditional (`ENABLE_DOCS`) | Auth Service Swagger UI (302 redirects to `/docs/auth/`) |
@@ -234,25 +237,34 @@ curl -i -X POST http://localhost/api/v1/products \
   -H "Content-Type: application/json" \
   -d '{"title":"New Product","price":29.99}'
 
-# 6. Anti-Spoofing Check: Fake X-User-Role on Mutating Route (Expect 401 Unauthorized)
+# 6. Admin Product Access Without Token (Expect 401 Unauthorized)
+curl -i http://localhost/api/v1/admin/products
+
+# 7. Anti-Spoofing Check: Fake X-User-Role on Mutating Route (Expect 401 Unauthorized)
 curl -i -X POST http://localhost/api/v1/orders \
   -H "X-User-Role: admin" \
   -H "Content-Type: application/json" \
   -d '{"items":[{"id":"item-1","qty":2}]}'
 
-# 7. Authenticated Order Creation (Expect 201 Created with verified claims forwarded)
+# 8. Authenticated Order Creation (Expect 201 Created with verified claims forwarded)
 curl -i -X POST http://localhost/api/v1/orders \
   -H "Authorization: Bearer <valid_jwt_token>" \
   -H "Content-Type: application/json" \
   -d '{"items":[{"id":"item-1","qty":2}]}'
 
-# 8. Unified Documentation Hub (Expect 200 OK HTML)
+# 9. Authenticated Admin Product Creation (Expect 201 Created with verified claims forwarded)
+curl -i -X POST http://localhost/api/v1/admin/products \
+  -H "Authorization: Bearer <valid_admin_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Admin Added Product","price":49.99}'
+
+# 10. Unified Documentation Hub (Expect 200 OK HTML)
 curl -i http://localhost/docs
 
-# 9. Product Service Scalar UI Proxy (Expect 200 OK HTML)
+# 11. Product Service Scalar UI Proxy (Expect 200 OK HTML)
 curl -i http://localhost/docs/products/scalar/
 
-# 10. Order Service OpenAPI YAML Schema (Expect 200 OK YAML)
+# 12. Order Service OpenAPI YAML Schema (Expect 200 OK YAML)
 curl -i http://localhost/docs/orders/openapi.yaml
 ```
 

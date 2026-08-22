@@ -137,6 +137,8 @@ describe('Store Gateway Specification & Feature Verification', () => {
       // Product Service routes (v1 standard and aliases)
       assert.match(content, /location\s+(\/api\/products|\/api\/products\/)\s*\{[\s\S]*?proxy_pass\s+\$\{PRODUCT_SERVICE_URL\}\/api\/v1\/products/, 'Must proxy /api/products to Product v1');
       assert.match(content, /location\s+(\/api\/v1\/products|\/api\/v1\/products\/)\s*\{[\s\S]*?proxy_pass\s+\$\{PRODUCT_SERVICE_URL\}\/api\/v1\/products/, 'Must proxy /api/v1/products to Product v1');
+      assert.match(content, /location\s+(\/api\/admin\/products|\/api\/admin\/products\/)\s*\{[\s\S]*?proxy_pass\s+\$\{PRODUCT_SERVICE_URL\}\/api\/v1\/admin\/products/, 'Must proxy /api/admin/products to Product admin v1');
+      assert.match(content, /location\s+(\/api\/v1\/admin\/products|\/api\/v1\/admin\/products\/)\s*\{[\s\S]*?proxy_pass\s+\$\{PRODUCT_SERVICE_URL\}\/api\/v1\/admin\/products/, 'Must proxy /api/v1/admin/products to Product admin v1');
 
       // Order Service routes (v1 standard and aliases)
       assert.match(content, /location\s+(\/api\/orders|\/api\/orders\/)\s*\{[\s\S]*?proxy_pass\s+\$\{ORDER_SERVICE_URL\}\/api\/v1\/orders/, 'Must proxy /api/orders to Order v1');
@@ -174,6 +176,7 @@ describe('Store Gateway Specification & Feature Verification', () => {
       assert.ok(rendered.includes('listen 80 default_server;'), 'Must render listen 80');
       assert.ok(rendered.includes('http://auth-service:8080/api/auth/'), 'Must render auth upstream');
       assert.ok(rendered.includes('http://product-service:8040/api/v1/products'), 'Must render product upstream');
+      assert.ok(rendered.includes('http://product-service:8040/api/v1/admin/products'), 'Must render admin product upstream');
       assert.ok(rendered.includes('http://order-service:8060/api/v1/orders'), 'Must render order upstream');
     });
   });
@@ -226,6 +229,9 @@ describe('Store Gateway Specification & Feature Verification', () => {
         if (req.url === '/openapi.json') {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ openapi: '3.1.0', info: { title: 'Product Service API' } }));
+        } else if (req.url === '/api/v1/admin/products' || req.url === '/api/admin/products') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ products: [{ id: 1, name: 'Admin Product', costPrice: 40.00 }] }));
         } else if (req.url === '/api/v1/products' || req.url === '/api/products') {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ products: [{ id: 1, name: 'Sample Product' }] }));
@@ -267,6 +273,12 @@ describe('Store Gateway Specification & Feature Verification', () => {
       const prodData = await prodRes.json();
       assert.equal(prodRes.status, 200);
       assert.equal(prodData.products[0].name, 'Sample Product');
+
+      // Test Admin Product endpoint
+      const adminProdRes = await fetch(`http://127.0.0.1:${productPort}/api/v1/admin/products`);
+      const adminProdData = await adminProdRes.json();
+      assert.equal(adminProdRes.status, 200);
+      assert.equal(adminProdData.products[0].name, 'Admin Product');
 
       // Test Order endpoint
       const orderRes = await fetch(`http://127.0.0.1:${orderPort}/api/v1/orders`);
