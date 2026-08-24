@@ -315,6 +315,46 @@ server {
     }
 
     # -------------------------------------------------------------------------
+    # User Service Endpoints
+    # -------------------------------------------------------------------------
+    # Explain 'Why': Routes /api/users/* and /api/v1/users/* to user_service while applying CORS, anti-spoofing, auth offload, and proxy headers.
+    location /api/users/ {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/auth-offload.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${USER_SERVICE_URL}/api/users/;
+    }
+
+    location = /api/users {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/auth-offload.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${USER_SERVICE_URL}/api/users;
+    }
+
+    location /api/v1/users/ {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/auth-offload.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${USER_SERVICE_URL}/api/users/;
+    }
+
+    location = /api/v1/users {
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/anti-spoofing.conf;
+        include /etc/nginx/snippets/auth-offload.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${USER_SERVICE_URL}/api/users;
+    }
+
+    # -------------------------------------------------------------------------
     # Documentation & OpenAPI Specs Proxy (Conditional on ENABLE_DOCS)
     # -------------------------------------------------------------------------
     # Root documentation index
@@ -323,7 +363,7 @@ server {
             return 404;
         }
         default_type text/html;
-        return 200 '<!DOCTYPE html><html><head><title>Store API Documentation Hub</title><style>body{font-family:sans-serif;max-width:800px;margin:40px auto;line-height:1.6;padding:0 20px;}h1{color:#1a73e8;}a{color:#1a73e8;text-decoration:none;}a:hover{text-decoration:underline;}ul{list-style-type:none;padding:0;}li{margin:12px 0;padding:12px;border:1px solid #e0e0e0;border-radius:6px;}</style></head><body><h1>Store API Documentation Hub</h1><ul><li><strong>Product Service (Modern Scalar UI):</strong> <a href="/docs/products/scalar/">/docs/products/scalar/</a></li><li><strong>Product Service (Swagger UI):</strong> <a href="/docs/products/swagger/">/docs/products/swagger/</a></li><li><strong>Product Service OpenAPI Specs:</strong> <a href="/docs/products/openapi.json">openapi.json</a> | <a href="/docs/products/openapi.yaml">openapi.yaml</a></li><li><strong>Order Service (Modern Scalar UI):</strong> <a href="/docs/orders/scalar">/docs/orders/scalar</a></li><li><strong>Order Service (Swagger UI):</strong> <a href="/docs/orders/swagger">/docs/orders/swagger</a></li><li><strong>Order Service OpenAPI Specs:</strong> <a href="/docs/orders/openapi.json">openapi.json</a> | <a href="/docs/orders/openapi.yaml">openapi.yaml</a></li><li><strong>Auth Service (Swagger UI):</strong> <a href="/docs/auth/">/docs/auth/</a></li><li><strong>Auth Service OpenAPI Spec:</strong> <a href="/docs/auth/openapi.yaml">openapi.yaml</a></li><li><strong>Auth Public JWKS:</strong> <a href="/.well-known/jwks.json">/.well-known/jwks.json</a></li></ul></body></html>\n';
+        return 200 '<!DOCTYPE html><html><head><title>Store API Documentation Hub</title><style>body{font-family:sans-serif;max-width:800px;margin:40px auto;line-height:1.6;padding:0 20px;}h1{color:#1a73e8;}a{color:#1a73e8;text-decoration:none;}a:hover{text-decoration:underline;}ul{list-style-type:none;padding:0;}li{margin:12px 0;padding:12px;border:1px solid #e0e0e0;border-radius:6px;}</style></head><body><h1>Store API Documentation Hub</h1><ul><li><strong>Product Service (Modern Scalar UI):</strong> <a href="/docs/products/scalar/">/docs/products/scalar/</a></li><li><strong>Product Service (Swagger UI):</strong> <a href="/docs/products/swagger/">/docs/products/swagger/</a></li><li><strong>Product Service OpenAPI Specs:</strong> <a href="/docs/products/openapi.json">openapi.json</a> | <a href="/docs/products/openapi.yaml">openapi.yaml</a></li><li><strong>Order Service (Modern Scalar UI):</strong> <a href="/docs/orders/scalar">/docs/orders/scalar</a></li><li><strong>Order Service (Swagger UI):</strong> <a href="/docs/orders/swagger">/docs/orders/swagger</a></li><li><strong>Order Service OpenAPI Specs:</strong> <a href="/docs/orders/openapi.json">openapi.json</a> | <a href="/docs/orders/openapi.yaml">openapi.yaml</a></li><li><strong>User Service (Swagger UI):</strong> <a href="/docs/users/swagger">/docs/users/swagger</a></li><li><strong>User Service OpenAPI Specs:</strong> <a href="/docs/users/openapi.json">openapi.json</a> | <a href="/docs/users/openapi.yaml">openapi.yaml</a></li><li><strong>Auth Service (Swagger UI):</strong> <a href="/docs/auth/">/docs/auth/</a></li><li><strong>Auth Service OpenAPI Spec:</strong> <a href="/docs/auth/openapi.yaml">openapi.yaml</a></li><li><strong>Auth Public JWKS:</strong> <a href="/.well-known/jwks.json">/.well-known/jwks.json</a></li></ul></body></html>\n';
     }
 
     # Auth Service Documentation
@@ -465,5 +505,46 @@ server {
         include /etc/nginx/snippets/proxy-params.conf;
 
         proxy_pass ${ORDER_SERVICE_URL}/docs/openapi.yaml;
+    }
+
+    # User Service Documentation
+    location = /docs/users {
+        if ($docs_disabled) {
+            return 404;
+        }
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${USER_SERVICE_URL}/docs;
+    }
+
+    location /docs/users/swagger {
+        if ($docs_disabled) {
+            return 404;
+        }
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${USER_SERVICE_URL}/swagger;
+    }
+
+    location = /docs/users/openapi.json {
+        if ($docs_disabled) {
+            return 404;
+        }
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${USER_SERVICE_URL}/docs/openapi.json;
+    }
+
+    location = /docs/users/openapi.yaml {
+        if ($docs_disabled) {
+            return 404;
+        }
+        include /etc/nginx/snippets/cors.conf;
+        include /etc/nginx/snippets/proxy-params.conf;
+
+        proxy_pass ${USER_SERVICE_URL}/docs/openapi.yaml;
     }
 }

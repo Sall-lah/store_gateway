@@ -98,10 +98,12 @@ describe('Gateway Authentication Offloading & Token Verification Suite', () => {
   let authServer;
   let productServer;
   let orderServer;
+  let userServer;
   let gatewaySimulator;
   let authPort;
   let productPort;
   let orderPort;
+  let userPort;
   let gatewayPort;
 
   before(async () => {
@@ -313,13 +315,85 @@ describe('Gateway Authentication Offloading & Token Verification Suite', () => {
       res.end();
     });
 
+    // 5. Mock User Service (port userPort)
+    userServer = http.createServer((req, res) => {
+      const userId = req.headers['x-user-id'] || '';
+      const role = req.headers['x-user-role'] || '';
+      const email = req.headers['x-user-email'] || '';
+
+      // All user service endpoints require injected X-User-Id from gateway
+      if (!userId) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'unauthorized', message: 'User identity required' }));
+        return;
+      }
+
+      // User Profile retrieval
+      if (req.url === '/api/users/profile' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          id: 'prof_12345',
+          userId: userId,
+          fullName: 'Budi Pratama',
+          userRole: role,
+          userEmail: email,
+          requestId: req.headers['x-request-id'] || null
+        }));
+        return;
+      }
+
+      // User Profile update
+      if (req.url === '/api/users/profile' && req.method === 'PUT') {
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', () => {
+          const payload = JSON.parse(body || '{}');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            id: 'prof_12345',
+            userId: userId,
+            fullName: payload.fullName || 'Budi Pratama Updated',
+            userRole: role,
+            userEmail: email,
+            requestId: req.headers['x-request-id'] || null
+          }));
+        });
+        return;
+      }
+
+      // User Account deletion
+      if (req.url === '/api/users/account' && req.method === 'DELETE') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          message: 'Account successfully deleted',
+          userId: userId
+        }));
+        return;
+      }
+
+      // User Notifications
+      if (req.url.startsWith('/api/users/notifications') && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          items: [{ id: 'notif_99', title: 'Order Update', userId: userId }],
+          totalCount: 1
+        }));
+        return;
+      }
+
+      res.writeHead(404);
+      res.end();
+    });
+
     await new Promise(r => authServer.listen(0, r));
     await new Promise(r => productServer.listen(0, r));
     await new Promise(r => orderServer.listen(0, r));
+    await new Promise(r => userServer.listen(0, r));
 
     authPort = authServer.address().port;
     productPort = productServer.address().port;
     orderPort = orderServer.address().port;
+    userPort = userServer.address().port;
 
     // 5. Gateway Simulator adhering strictly to store_gateway NGINX rules
     gatewaySimulator = http.createServer(async (req, res) => {
@@ -553,6 +627,66 @@ describe('Gateway Authentication Offloading & Token Verification Suite', () => {
         return;
       }
 
+      // Routing: User Service (v1 and alias) - Full Auth Offload
+      if (req.url.startsWith('/api/users') || req.url.startsWith('/api/v1/users')) {
+        const targetPath = req.url.replace(/^\/api\/v1\/users/, '/api/users');
+
+        // Enforce subrequest auth verification on all requests (including GET)
+        const authSubRes = await new Promise((resolve) => {
+          const subReq = http.request({
+            host: '127.0.0.1',
+            port: authPort,
+            path: '/api/v1/auth/me',
+            method: 'GET',
+            headers: {
+              'authorization': req.headers['authorization'] || '',
+              'cookie': req.headers['cookie'] || '',
+              'x-request-id': requestId
+            }
+          }, (authSub) => {
+            resolve(authSub);
+          });
+          subReq.on('error', () => resolve(null));
+          subReq.end();
+        });
+
+        if (!authSubRes || authSubRes.statusCode !== 200) {
+          res.writeHead(401, {
+            'Content-Type': 'application/json',
+            'X-Request-ID': requestId
+          });
+          res.end(JSON.stringify({ error: 'unauthorized', message: 'Authentication required' }));
+          return;
+        }
+
+        const verifiedUserId = authSubRes.headers['x-user-id'] || null;
+        const verifiedUserRole = authSubRes.headers['x-user-role'] || null;
+        const verifiedUserEmail = authSubRes.headers['x-user-email'] || null;
+
+        const sanitizedHeaders = { ...req.headers };
+        delete sanitizedHeaders['x-user-id'];
+        delete sanitizedHeaders['x-user-role'];
+        delete sanitizedHeaders['x-user-email'];
+
+        if (verifiedUserId) sanitizedHeaders['x-user-id'] = verifiedUserId;
+        if (verifiedUserRole) sanitizedHeaders['x-user-role'] = verifiedUserRole;
+        if (verifiedUserEmail) sanitizedHeaders['x-user-email'] = verifiedUserEmail;
+        sanitizedHeaders['x-request-id'] = requestId;
+
+        const proxyReq = http.request({
+          host: '127.0.0.1',
+          port: userPort,
+          path: targetPath,
+          method: req.method,
+          headers: sanitizedHeaders
+        }, (proxyRes) => {
+          res.writeHead(proxyRes.statusCode, proxyRes.headers);
+          proxyRes.pipe(res);
+        });
+        req.pipe(proxyReq);
+        return;
+      }
+
       res.writeHead(404);
       res.end();
     });
@@ -565,6 +699,7 @@ describe('Gateway Authentication Offloading & Token Verification Suite', () => {
     authServer.close();
     productServer.close();
     orderServer.close();
+    userServer.close();
     gatewaySimulator.close();
   });
 
@@ -742,5 +877,72 @@ describe('Gateway Authentication Offloading & Token Verification Suite', () => {
     assert.equal(data.userId, 'usr_admin_999');
     assert.equal(data.userRole, 'ADMIN');
     assert.ok(data.requestId);
+  });
+
+  test('Step 13: User Service: Unauthenticated GET /api/v1/users/profile is rejected with 401 at Gateway perimeter', async () => {
+    const res = await fetch(`http://127.0.0.1:${gatewayPort}/api/v1/users/profile`);
+    assert.equal(res.status, 401);
+    const data = await res.json();
+    assert.equal(data.error, 'unauthorized');
+  });
+
+  test('Step 14: User Service: Authenticated user retrieves profile via GET /api/v1/users/profile with verified X-User-* claims injected', async () => {
+    const loginRes = await fetch(`http://127.0.0.1:${gatewayPort}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'admin@example.com', password: 'AdminPass123!' })
+    });
+    const { access_token } = await loginRes.json();
+
+    const res = await fetch(`http://127.0.0.1:${gatewayPort}/api/v1/users/profile`, {
+      headers: {
+        'Authorization': `Bearer ${access_token}`
+      }
+    });
+
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.fullName, 'Budi Pratama');
+    assert.equal(data.userId, 'usr_admin_999');
+    assert.equal(data.userRole, 'ADMIN');
+    assert.equal(data.userEmail, 'admin@example.com');
+    assert.ok(data.requestId);
+  });
+
+  test('Step 15: User Service: Authenticated user updates profile via PUT /api/users/profile alias', async () => {
+    const loginRes = await fetch(`http://127.0.0.1:${gatewayPort}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'admin@example.com', password: 'AdminPass123!' })
+    });
+    const { access_token } = await loginRes.json();
+
+    const res = await fetch(`http://127.0.0.1:${gatewayPort}/api/users/profile`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${access_token}`
+      },
+      body: JSON.stringify({ fullName: 'Budi Pratama Updated' })
+    });
+
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.fullName, 'Budi Pratama Updated');
+    assert.equal(data.userId, 'usr_admin_999');
+    assert.ok(data.requestId);
+  });
+
+  test('Step 16: User Service: Anti-Spoofing: Client cannot inject fake X-User-Id to impersonate user without token', async () => {
+    const res = await fetch(`http://127.0.0.1:${gatewayPort}/api/v1/users/profile`, {
+      headers: {
+        'X-User-Id': 'attacker_fake_id',
+        'X-User-Role': 'ADMIN'
+      }
+    });
+
+    assert.equal(res.status, 401);
+    const data = await res.json();
+    assert.equal(data.error, 'unauthorized');
   });
 });

@@ -1,6 +1,6 @@
 # Store Gateway (NGINX API Gateway)
 
-`store_gateway` is the single entry point and high-performance reverse proxy for the microservice ecosystem (Auth Service, Product Service, and Order Service). It centralizes perimeter authentication offloading, anti-spoofing header sanitization, centralized CORS preflight caching, unified documentation proxying, and distributed request tracing.
+`store_gateway` is the single entry point and high-performance reverse proxy for the microservice ecosystem (Auth Service, Product Service, Order Service, and User Service). It centralizes perimeter authentication offloading, anti-spoofing header sanitization, centralized CORS preflight caching, unified documentation proxying, and distributed request tracing.
 
 ---
 
@@ -21,22 +21,22 @@
                     │ • JWKS Pass-Through Routing     │
                     │ • Distributed Trace ID Injection│
                     │ • Unified Documentation Proxy   │
-                    └───────┬─────────┬─────────┬─────┘
-                            │         │         │
-    /api[/v1]/auth/*        │         │         │  /api[/v1]/orders/*
-    /docs/auth/*            │         │         │  /docs/orders/*
-    /.well-known/*          │         │         │
-                            ▼         │         ▼
-             ┌─────────────────────┐  │  ┌─────────────────────┐
-             │    AUTH SERVICE     │  │  │    ORDER SERVICE    │
-             │ (auth-service:8080) │  │  │ (order-service:8060) │
-             ├─────────────────────┤  │  ├─────────────────────┤
-             │ • RS256 JWKS Key    │  │  │ • Order Management  │
-             │   Distribution      │  │  │ • Offloaded Auth    │
-             │ • Login / Register  │  │  │ • Scalar & Swagger  │
-             │ • Swagger UI        │  │  │ • OpenAPI Specs     │
-             └─────────────────────┘  │  └─────────────────────┘
-                                      │
+                    └───────┬─────────┬─────────┬─────┴─────────┐
+                            │         │         │               │
+    /api[/v1]/auth/*        │         │         │               │  /api[/v1]/users/*
+    /docs/auth/*            │         │         │               │  /docs/users/*
+    /.well-known/*          │         │         │               │
+                            ▼         │         ▼               ▼
+             ┌─────────────────────┐  │  ┌─────────────────────┐┌─────────────────────┐
+             │    AUTH SERVICE     │  │  │    ORDER SERVICE    ││    USER SERVICE     │
+             │ (auth-service:8080) │  │  │ (order-service:8060) ││ (user-service:8082) │
+             ├─────────────────────┤  │  ├─────────────────────┤├─────────────────────┤
+             │ • RS256 JWKS Key    │  │  │ • Order Management  ││ • User Profiles     │
+             │   Distribution      │  │  │ • Offloaded Auth    ││ • Account Lifecycle │
+             │ • Login / Register  │  │  │ • Scalar & Swagger  ││ • Notifications Feed│
+             │ • Swagger UI        │  │  │ • OpenAPI Specs     ││ • Notification Prefs│
+             └─────────────────────┘  │  └─────────────────────┘│ • Swagger & OpenAPI  │
+                                      │                         └─────────────────────┘
                                       │  /api[/v1]/products/*
                                       │  /api[/v1]/admin/products/*
                                       │  /docs/products/*
@@ -114,6 +114,7 @@ sequenceDiagram
 | `ALL /api/v1/products/*` (or `/api/products/*`) | `ANY` | `${PRODUCT_SERVICE_URL}/api/v1/products/*` | Mutation-Only Auth | Product catalog: `GET/HEAD` public; `POST/PUT/DELETE` require auth |
 | `ALL /api/v1/admin/products/*` (or `/api/admin/products/*`) | `ANY` | `${PRODUCT_SERVICE_URL}/api/v1/admin/products/*` | Full Auth Offload | Admin product management: all methods require verified caller identity |
 | `ALL /api/v1/orders/*` (or `/api/orders/*`) | `ANY` | `${ORDER_SERVICE_URL}/api/v1/orders/*` | Full Auth Offload | Order processing: all mutations require verified caller identity |
+| `ALL /api/v1/users/*` (or `/api/users/*`) | `ANY` | `${USER_SERVICE_URL}/api/users/*` | Full Auth Offload | User profile, notifications, preferences, and account lifecycle |
 | `GET /docs` | `GET` | *Gateway Internal* | Conditional (`ENABLE_DOCS`) | Unified API Documentation Hub landing page (HTML) |
 | `GET /docs/auth` | `GET` | `${AUTH_SERVICE_URL}/docs/` | Conditional (`ENABLE_DOCS`) | Auth Service Swagger UI (302 redirects to `/docs/auth/`) |
 | `GET /docs/auth/openapi.yaml` | `GET` | `${AUTH_SERVICE_URL}/docs/openapi.yaml` | Conditional (`ENABLE_DOCS`) | Auth Service raw OpenAPI YAML schema |
@@ -125,6 +126,9 @@ sequenceDiagram
 | `GET /docs/orders/swagger` | `GET` | `${ORDER_SERVICE_URL}/swagger` | Conditional (`ENABLE_DOCS`) | Order Service classic Swagger documentation UI |
 | `GET /docs/orders/openapi.json` | `GET` | `${ORDER_SERVICE_URL}/docs/openapi.json` | Conditional (`ENABLE_DOCS`) | Order Service raw OpenAPI JSON schema |
 | `GET /docs/orders/openapi.yaml` | `GET` | `${ORDER_SERVICE_URL}/docs/openapi.yaml` | Conditional (`ENABLE_DOCS`) | Order Service raw OpenAPI YAML schema |
+| `GET /docs/users` (or `/docs/users/swagger`) | `GET` | `${USER_SERVICE_URL}/swagger` | Conditional (`ENABLE_DOCS`) | User Service interactive Swagger documentation UI |
+| `GET /docs/users/openapi.json` | `GET` | `${USER_SERVICE_URL}/docs/openapi.json` | Conditional (`ENABLE_DOCS`) | User Service raw OpenAPI JSON schema |
+| `GET /docs/users/openapi.yaml` | `GET` | `${USER_SERVICE_URL}/docs/openapi.yaml` | Conditional (`ENABLE_DOCS`) | User Service raw OpenAPI YAML schema |
 
 ---
 
@@ -169,6 +173,7 @@ sequenceDiagram
 | `AUTH_SERVICE_URL` | **Required** | *None* | Base HTTP URL of the upstream Auth Service | `http://localhost:8080` or `http://auth-service:8080` |
 | `PRODUCT_SERVICE_URL` | **Required** | *None* | Base HTTP URL of the upstream Product Service | `http://localhost:8040` or `http://product-service:8040` |
 | `ORDER_SERVICE_URL` | **Required** | *None* | Base HTTP URL of the upstream Order Service | `http://localhost:8060` or `http://order-service:8060` |
+| `USER_SERVICE_URL` | **Required** | *None* | Base HTTP URL of the upstream User Service | `http://localhost:8082` or `http://user-service:8082` |
 
 ---
 
@@ -186,6 +191,7 @@ ENABLE_DOCS=true
 AUTH_SERVICE_URL=http://localhost:8080
 PRODUCT_SERVICE_URL=http://localhost:8040
 ORDER_SERVICE_URL=http://localhost:8060
+USER_SERVICE_URL=http://localhost:8082
 ```
 
 ### 2. Build and Run Standalone Docker Container
@@ -258,14 +264,21 @@ curl -i -X POST http://localhost/api/v1/admin/products \
   -H "Content-Type: application/json" \
   -d '{"title":"Admin Added Product","price":49.99}'
 
-# 10. Unified Documentation Hub (Expect 200 OK HTML)
+# 10. Authenticated User Profile Retrieval (Expect 200 OK with User Profile)
+curl -i http://localhost/api/v1/users/profile \
+  -H "Authorization: Bearer <valid_jwt_token>"
+
+# 11. Unauthenticated User Route Access (Expect 401 Unauthorized)
+curl -i http://localhost/api/v1/users/profile
+
+# 12. Unified Documentation Hub (Expect 200 OK HTML)
 curl -i http://localhost/docs
 
-# 11. Product Service Scalar UI Proxy (Expect 200 OK HTML)
-curl -i http://localhost/docs/products/scalar/
+# 13. User Service Swagger UI Proxy (Expect 200 OK HTML)
+curl -i http://localhost/docs/users/swagger
 
-# 12. Order Service OpenAPI YAML Schema (Expect 200 OK YAML)
-curl -i http://localhost/docs/orders/openapi.yaml
+# 14. User Service OpenAPI YAML Schema (Expect 200 OK YAML)
+curl -i http://localhost/docs/users/openapi.yaml
 ```
 
 ---

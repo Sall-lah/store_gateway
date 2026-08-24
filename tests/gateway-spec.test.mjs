@@ -144,6 +144,10 @@ describe('Store Gateway Specification & Feature Verification', () => {
       assert.match(content, /location\s+(\/api\/orders|\/api\/orders\/)\s*\{[\s\S]*?proxy_pass\s+\$\{ORDER_SERVICE_URL\}\/api\/v1\/orders/, 'Must proxy /api/orders to Order v1');
       assert.match(content, /location\s+(\/api\/v1\/orders|\/api\/v1\/orders\/)\s*\{[\s\S]*?proxy_pass\s+\$\{ORDER_SERVICE_URL\}\/api\/v1\/orders/, 'Must proxy /api/v1/orders to Order v1');
 
+      // User Service routes (v1 standard and aliases)
+      assert.match(content, /location\s+(\/api\/users|\/api\/users\/)\s*\{[\s\S]*?proxy_pass\s+\$\{USER_SERVICE_URL\}\/api\/users/, 'Must proxy /api/users to User service');
+      assert.match(content, /location\s+(\/api\/v1\/users|\/api\/v1\/users\/)\s*\{[\s\S]*?proxy_pass\s+\$\{USER_SERVICE_URL\}\/api\/users/, 'Must proxy /api/v1/users to User service');
+
       // Documentation routes & toggle
       assert.match(content, /map\s+"?\$\{ENABLE_DOCS\}"?\s+\$docs_disabled/, 'Must map ENABLE_DOCS to docs_disabled');
       assert.match(content, /location\s*=\s*\/docs\b/, 'Must provide /docs landing index');
@@ -157,6 +161,10 @@ describe('Store Gateway Specification & Feature Verification', () => {
       assert.match(content, /location\s+\/docs\/orders\/swagger\s*\{[\s\S]*?proxy_pass\s+\$\{ORDER_SERVICE_URL\}\/swagger/, 'Must proxy /docs/orders/swagger to Order Swagger UI');
       assert.match(content, /location\s*=\s*\/docs\/orders\/openapi\.json\s*\{[\s\S]*?proxy_pass\s+\$\{ORDER_SERVICE_URL\}\/docs\/openapi\.json/, 'Must proxy /docs/orders/openapi.json');
       assert.match(content, /location\s*=\s*\/docs\/orders\/openapi\.yaml\s*\{[\s\S]*?proxy_pass\s+\$\{ORDER_SERVICE_URL\}\/docs\/openapi\.yaml/, 'Must proxy /docs/orders/openapi.yaml');
+      assert.match(content, /location\s*=\s*\/docs\/users\s*\{[\s\S]*?proxy_pass\s+\$\{USER_SERVICE_URL\}\/docs/, 'Must proxy /docs/users to User Docs');
+      assert.match(content, /location\s+\/docs\/users\/swagger\s*\{[\s\S]*?proxy_pass\s+\$\{USER_SERVICE_URL\}\/swagger/, 'Must proxy /docs/users/swagger to User Swagger UI');
+      assert.match(content, /location\s*=\s*\/docs\/users\/openapi\.json\s*\{[\s\S]*?proxy_pass\s+\$\{USER_SERVICE_URL\}\/docs\/openapi\.json/, 'Must proxy /docs/users/openapi.json');
+      assert.match(content, /location\s*=\s*\/docs\/users\/openapi\.yaml\s*\{[\s\S]*?proxy_pass\s+\$\{USER_SERVICE_URL\}\/docs\/openapi\.yaml/, 'Must proxy /docs/users/openapi.yaml');
     });
 
     test('template substitution must produce valid NGINX configuration', () => {
@@ -166,27 +174,31 @@ describe('Store Gateway Specification & Feature Verification', () => {
         .replaceAll('${ENABLE_DOCS}', 'true')
         .replaceAll('${AUTH_SERVICE_URL}', 'http://auth-service:8080')
         .replaceAll('${PRODUCT_SERVICE_URL}', 'http://product-service:8040')
-        .replaceAll('${ORDER_SERVICE_URL}', 'http://order-service:8060');
+        .replaceAll('${ORDER_SERVICE_URL}', 'http://order-service:8060')
+        .replaceAll('${USER_SERVICE_URL}', 'http://user-service:8082');
 
       assert.ok(!rendered.includes('${GATEWAY_PORT}'), 'GATEWAY_PORT variable should be replaced');
       assert.ok(!rendered.includes('${ENABLE_DOCS}'), 'ENABLE_DOCS variable should be replaced');
       assert.ok(!rendered.includes('${AUTH_SERVICE_URL}'), 'AUTH_SERVICE_URL variable should be replaced');
       assert.ok(!rendered.includes('${PRODUCT_SERVICE_URL}'), 'PRODUCT_SERVICE_URL variable should be replaced');
       assert.ok(!rendered.includes('${ORDER_SERVICE_URL}'), 'ORDER_SERVICE_URL variable should be replaced');
+      assert.ok(!rendered.includes('${USER_SERVICE_URL}'), 'USER_SERVICE_URL variable should be replaced');
       assert.ok(rendered.includes('listen 80 default_server;'), 'Must render listen 80');
       assert.ok(rendered.includes('http://auth-service:8080/api/auth/'), 'Must render auth upstream');
       assert.ok(rendered.includes('http://product-service:8040/api/v1/products'), 'Must render product upstream');
       assert.ok(rendered.includes('http://product-service:8040/api/v1/admin/products'), 'Must render admin product upstream');
       assert.ok(rendered.includes('http://order-service:8060/api/v1/orders'), 'Must render order upstream');
+      assert.ok(rendered.includes('http://user-service:8082/api/users'), 'Must render user upstream');
     });
   });
 
   describe('7. Docker & Environment Security', () => {
     test('Dockerfile must set NGINX_ENVSUBST_FILTER to protect internal NGINX vars', () => {
       const dockerfile = readProjectFile('Dockerfile');
-      assert.match(dockerfile, /NGINX_ENVSUBST_FILTER=".*ORDER_SERVICE_URL.*"/, 'Must define filter for envsubst including ORDER_SERVICE_URL');
+      assert.match(dockerfile, /NGINX_ENVSUBST_FILTER=".*USER_SERVICE_URL.*"/, 'Must define filter for envsubst including USER_SERVICE_URL');
       assert.match(dockerfile, /ENABLE_DOCS=true/, 'Dockerfile must set default ENABLE_DOCS=true');
       assert.match(dockerfile, /ORDER_SERVICE_URL=http:\/\/order-service:8060/, 'Dockerfile must set default ORDER_SERVICE_URL');
+      assert.match(dockerfile, /USER_SERVICE_URL=http:\/\/user-service:8082/, 'Dockerfile must set default USER_SERVICE_URL');
       assert.match(dockerfile, /HEALTHCHECK/, 'Dockerfile must include HEALTHCHECK');
     });
 
@@ -205,13 +217,14 @@ describe('Store Gateway Specification & Feature Verification', () => {
       assert.match(envExample, /AUTH_SERVICE_URL=/, 'Must specify AUTH_SERVICE_URL');
       assert.match(envExample, /PRODUCT_SERVICE_URL=/, 'Must specify PRODUCT_SERVICE_URL');
       assert.match(envExample, /ORDER_SERVICE_URL=/, 'Must specify ORDER_SERVICE_URL');
+      assert.match(envExample, /USER_SERVICE_URL=/, 'Must specify USER_SERVICE_URL');
       assert.match(envExample, /GATEWAY_PORT=/, 'Must specify GATEWAY_PORT');
     });
   });
 
   describe('8. Mock Upstream Microservices Contract Simulation', () => {
     test('validates downstream service JWKS and docs endpoints response contracts', async () => {
-      // Explain 'Why': Spins up simulated Auth, Product, and Order microservice endpoints in memory to verify contract schemas.
+      // Explain 'Why': Spins up simulated Auth, Product, Order, and User microservice endpoints in memory to verify contract schemas.
       const authServer = http.createServer((req, res) => {
         if (req.url === '/.well-known/jwks.json') {
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -254,13 +267,31 @@ describe('Store Gateway Specification & Feature Verification', () => {
         }
       });
 
+      const userServer = http.createServer((req, res) => {
+        if (req.url === '/docs/openapi.yaml') {
+          res.writeHead(200, { 'Content-Type': 'application/yaml' });
+          res.end('openapi: 3.1.0\ninfo:\n  title: Store User Microservice API\n');
+        } else if (req.url === '/api/users/profile') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ id: 'prof_123', userId: 'usr_abc_789', fullName: 'Budi Pratama' }));
+        } else if (req.url === '/api/users/notifications') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ items: [{ id: 'notif_1', title: 'Welcome' }], totalCount: 1 }));
+        } else {
+          res.writeHead(404);
+          res.end();
+        }
+      });
+
       await new Promise(resolve => authServer.listen(0, resolve));
       await new Promise(resolve => productServer.listen(0, resolve));
       await new Promise(resolve => orderServer.listen(0, resolve));
+      await new Promise(resolve => userServer.listen(0, resolve));
 
       const authPort = authServer.address().port;
       const productPort = productServer.address().port;
       const orderPort = orderServer.address().port;
+      const userPort = userServer.address().port;
 
       // Test JWKS endpoint
       const jwksRes = await fetch(`http://127.0.0.1:${authPort}/.well-known/jwks.json`);
@@ -286,9 +317,22 @@ describe('Store Gateway Specification & Feature Verification', () => {
       assert.equal(orderRes.status, 200);
       assert.equal(orderData.orders[0].id, 101);
 
+      // Test User Profile endpoint
+      const userRes = await fetch(`http://127.0.0.1:${userPort}/api/users/profile`);
+      const userData = await userRes.json();
+      assert.equal(userRes.status, 200);
+      assert.equal(userData.fullName, 'Budi Pratama');
+
+      // Test User Docs OpenAPI endpoint
+      const userDocsRes = await fetch(`http://127.0.0.1:${userPort}/docs/openapi.yaml`);
+      const userDocsData = await userDocsRes.text();
+      assert.equal(userDocsRes.status, 200);
+      assert.ok(userDocsData.includes('Store User Microservice API'));
+
       authServer.close();
       productServer.close();
       orderServer.close();
+      userServer.close();
     });
   });
 
