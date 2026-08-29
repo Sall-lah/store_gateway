@@ -148,7 +148,8 @@ sequenceDiagram
 ### 3. Centralized CORS Management (`snippets/cors.conf`)
 - Intercepts all browser `OPTIONS` preflight requests and immediately responds with `204 No Content`.
 - Caches preflight responses for 24 hours (`Access-Control-Max-Age: 86400`).
-- Supports credentials (`Access-Control-Allow-Credentials: true`) with dynamic request origin reflection.
+- Dynamically matches incoming `Origin` against `CORS_ALLOWED_ORIGIN_REGEX` environment variable, safely reflecting allowed origins instead of insecure `*` wildcards.
+- Supports credentials (`Access-Control-Allow-Credentials: true`) when request origin matches the configured regex.
 - Suppresses upstream CORS headers using `proxy_hide_header Access-Control-Allow-Origin` to avoid duplicate header parsing errors in browsers.
 
 ### 4. Unified Documentation Proxying
@@ -170,10 +171,12 @@ sequenceDiagram
 |---|---|---|---|---|
 | `GATEWAY_PORT` | Optional | `80` | Port on which NGINX listens for incoming client requests | `80` or `8000` |
 | `ENABLE_DOCS` | Optional | `true` | Toggles documentation endpoints (`/docs*`). Set to `false`, `0`, or `off` to disable | `true` or `false` |
+| `CORS_ALLOWED_ORIGIN_REGEX` | Optional | `^https?://(localhost\|127\.0\.0\.1)(:[0-9]+)?$` | Regular expression matching allowed client `Origin` headers for CORS reflection and credential support | `^https?://(localhost\|127\.0\.0\.1\|yourdomain\.com)(:[0-9]+)?$` |
 | `AUTH_SERVICE_URL` | **Required** | *None* | Base HTTP URL of the upstream Auth Service | `http://localhost:8080` or `http://auth-service:8080` |
 | `PRODUCT_SERVICE_URL` | **Required** | *None* | Base HTTP URL of the upstream Product Service | `http://localhost:8040` or `http://product-service:8040` |
 | `ORDER_SERVICE_URL` | **Required** | *None* | Base HTTP URL of the upstream Order Service | `http://localhost:8060` or `http://order-service:8060` |
 | `USER_SERVICE_URL` | **Required** | *None* | Base HTTP URL of the upstream User Service | `http://localhost:8082` or `http://user-service:8082` |
+| `CLOUDFLARE_TUNNEL_TOKEN` | Optional | *None* | Authentication token for embedded Cloudflare Tunnel (`cloudflared`). When supplied, starts an outbound tunnel to Cloudflare Edge | `eyJhIjoi...` |
 
 ---
 
@@ -184,14 +187,23 @@ sequenceDiagram
 cp .env.example .env
 ```
 
-Configure `.env` with your downstream service hostnames and ports:
+Configure `.env` with your downstream service hostnames, CORS pattern, and ports:
 ```ini
+# Gateway Configuration
 GATEWAY_PORT=80
 ENABLE_DOCS=true
-AUTH_SERVICE_URL=http://localhost:8080
-PRODUCT_SERVICE_URL=http://localhost:8040
-ORDER_SERVICE_URL=http://localhost:8060
-USER_SERVICE_URL=http://localhost:8082
+
+# Downstream Microservices
+AUTH_SERVICE_URL=http://auth-service:8080
+PRODUCT_SERVICE_URL=http://product-service:8040
+ORDER_SERVICE_URL=http://order-service:8060
+USER_SERVICE_URL=http://user-service:8082
+
+# Allowed Origins Regex for CORS
+CORS_ALLOWED_ORIGIN_REGEX=^https?://(localhost|127\.0\.0\.1|([a-zA-Z0-9-]+\.)*yourdomain\.com)(:[0-9]+)?$
+
+# Cloudflare Tunnel Token (optional)
+CLOUDFLARE_TUNNEL_TOKEN=
 ```
 
 ### 2. Build and Run Standalone Docker Container
@@ -214,6 +226,271 @@ curl http://localhost/health
 
 ---
 
+## 📦 Standalone Podman Deployment Guide
+
+Podman allows rootless container management without requiring Docker daemon. You can deploy `store_gateway` and downstream microservices using either **User Networks** or **Podman Pods**.
+
+### Approach A: Standalone Containers on a Podman Network
+
+This approach uses a dedicated bridge network for service discovery by container name.
+
+```bash
+# 1. Create a user-defined Podman network
+podman network create store_net
+
+# 2. Run downstream microservices on the network
+podman run -d --name auth-service --network store_net -e PORT=8080 store_auth:latest
+podman run -d --name product-service --network store_net -e PORT=8040 product_service:latest
+podman run -d --name order-service --network store_net -e PORT=8060 order_service:latest
+podman run -d --name user-service --network store_net -e PORT=8082 user_service:latest
+
+# 3. Build and run store_gateway connected to the network
+podman build -t store_gateway .
+
+podman run -d \
+  --name store_gateway \
+  --network store_net \
+  -p 8000:80 \
+  -e GATEWAY_PORT=80 \
+  -e CORS_ALLOWED_ORIGIN_REGEX="^https?://(localhost|127\.0\.0\.1|yourdomain\.com|.+\.yourdomain\.com)(:[0-9]+)?$" \
+  -e AUTH_SERVICE_URL=http://auth-service:8080 \
+  -e PRODUCT_SERVICE_URL=http://product-service:8040 \
+  -e ORDER_SERVICE_URL=http://order-service:8060 \
+  -e USER_SERVICE_URL=http://user-service:8082 \
+  -e ENABLE_DOCS=true \
+  store_gateway
+
+# 4. Check gateway status
+curl http://localhost:8000/health
+```
+
+---
+
+### Approach B: Podman Pod (Shared Network Namespace)
+
+In a Podman Pod, all containers share `localhost` networking and port namespaces, eliminating the need for inter-container DNS.
+
+```bash
+# 1. Create a Pod exposing gateway port (8000) and frontend port (3000)
+podman pod create \
+  --name store_pod \
+  -p 8000:80 \
+  -p 3000:3000
+
+# 2. Launch microservices inside the pod (binding to localhost ports)
+podman run -d --pod store_pod --name auth-service -e PORT=8080 store_auth:latest
+podman run -d --pod store_pod --name product-service -e PORT=8040 product_service:latest
+podman run -d --pod store_pod --name order-service -e PORT=8060 order_service:latest
+podman run -d --pod store_pod --name user-service -e PORT=8082 user_service:latest
+podman run -d --pod store_pod --name frontend-app -e PORT=3000 frontend:latest
+
+# 3. Launch store_gateway inside the pod pointing to localhost upstreams
+podman run -d \
+  --pod store_pod \
+  --name store_gateway \
+  -e GATEWAY_PORT=80 \
+  -e CORS_ALLOWED_ORIGIN_REGEX="^https?://(localhost|127\.0\.0\.1|yourdomain\.com|.+\.yourdomain\.com)(:[0-9]+)?$" \
+  -e AUTH_SERVICE_URL=http://127.0.0.1:8080 \
+  -e PRODUCT_SERVICE_URL=http://127.0.0.1:8040 \
+  -e ORDER_SERVICE_URL=http://127.0.0.1:8060 \
+  -e USER_SERVICE_URL=http://127.0.0.1:8082 \
+  -e ENABLE_DOCS=true \
+  store_gateway
+```
+
+---
+
+## 🌐 Host Edge NGINX Reverse-Proxy Configuration
+
+In production single-server deployments, a **Host Edge NGINX** instance terminates SSL/TLS (e.g. via Let's Encrypt / Certbot) and proxies public traffic to the frontend and API gateway containers.
+
+```
+                    Internet (HTTPS 443)
+                             │
+            ┌────────────────┴────────────────┐
+            ▼                                 ▼
+   https://yourdomain.com           https://api.yourdomain.com
+            │                                 │
+  ┌─────────────────────────────────────────────────────┐
+  │              HOST EDGE NGINX (Host OS)              │
+  │        (SSL Termination, HTTP/2, Certbot)           │
+  └─────────┬─────────────────────────────────┬─────────┘
+            │ proxy_pass                      │ proxy_pass
+            ▼ http://127.0.0.1:3000           ▼ http://127.0.0.1:8000
+    ┌───────────────┐                 ┌───────────────┐
+    │ Frontend App  │                 │ STORE GATEWAY │
+    │  (Container)  │                 │  (Container)  │
+    └───────────────┘                 └───────────────┘
+```
+
+### Sample Host Edge NGINX Server Block (`/etc/nginx/sites-available/store.conf`)
+
+```nginx
+# 1. Redirect HTTP to HTTPS for all domains
+server {
+    listen 80;
+    listen [::]:80;
+    server_name yourdomain.com www.yourdomain.com api.yourdomain.com;
+    return 301 https://$host$request_uri;
+}
+
+# 2. Frontend Application (yourdomain.com)
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name yourdomain.com www.yourdomain.com;
+
+    # SSL Certificates (managed by Certbot)
+    ssl_certificate /etc/letsencrypt/live/yourdomain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    client_max_body_size 20M;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port $server_port;
+
+        proxy_cache_bypass $http_upgrade;
+        proxy_read_timeout 60s;
+    }
+}
+
+# 3. API Gateway Backend (api.yourdomain.com)
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name api.yourdomain.com;
+
+    # SSL Certificates (managed by Certbot)
+    ssl_certificate /etc/letsencrypt/live/yourdomain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    client_max_body_size 50M;
+
+    location / {
+        # Proxy to store_gateway container port
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port $server_port;
+
+        # WebSocket support (for realtime notifications if enabled)
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+
+        proxy_read_timeout 90s;
+        proxy_buffering off;
+    }
+}
+```
+
+---
+
+## ☁️ Cloudflare Tunnel Deployment & DNS CNAME Setup
+
+When deploying `store_gateway` in local development, home/office networks (CGNAT), or private cloud VPCs without public ingress, you can use the **embedded Cloudflare Tunnel** to securely expose your API without opening any router or firewall ports.
+
+```
+[Client / Browser: https://api.yourdomain.com]
+                       │
+                       ▼
+             [Cloudflare Edge Network]
+         (DDoS Protection, WAF, SSL Termination)
+                       │
+                       ▲ (Outbound Encrypted Tunnel)
+                       │ (Bypasses CGNAT & Firewalls)
+         ┌─────────────┴──────────────────────────────┐
+         │       STORE_GATEWAY CONTAINER              │
+         │                                            │
+         │   [cloudflared (background)]               │
+         │               │                            │
+         │               ▼ (http://localhost:80)      │
+         │   [NGINX Gateway Router (foreground)]      │
+         │               │                            │
+         │       ┌───────┴───────┐                    │
+         │       ▼               ▼                    │
+         │   Auth Service   Product Service ...       │
+         └────────────────────────────────────────────┘
+```
+
+### 1. Cloudflare Zero Trust Configuration
+
+1. Log into the [Cloudflare Zero Trust Dashboard](https://one.dash.cloudflare.com/).
+2. Navigate to **Networks** ➔ **Tunnels** ➔ **Add a tunnel**.
+3. Select **Cloudflare** (Connector) and give it a name (e.g. `store-gateway-tunnel`).
+4. **Copy the Connector Token (`eyJhIjoi...`)**:
+   - Under **Install and run a connector**, select **Docker** (or any OS).
+   - Copy the long token string starting with `eyJh...` and paste it into your `.env` as `CLOUDFLARE_TUNNEL_TOKEN`.
+   - *(Note: Do not confuse the Connector Token with the Tunnel UUID; the token is the Base64 JWT required for the container to authenticate).*
+5. **Configure Public Hostname**:
+   - Switch to the **Public Hostname** tab in your tunnel settings.
+   - **Subdomain**: `api`
+   - **Domain**: `yourdomain.com` (or your registered domain)
+   - **Service Type**: **`HTTP`** *(do NOT select `HTTPS`)*
+   - **URL**: `localhost:80` (or `127.0.0.1:80`)
+6. Save the hostname. Cloudflare will automatically manage the `CNAME` record pointing `api.yourdomain.com` to `<tunnel-uuid>.cfargotunnel.com` with proxying enabled (🟠).
+
+> [!IMPORTANT]
+> **Service Type Must Be `HTTP`**:
+> NGINX inside the container listens for plain HTTP on port 80, while Cloudflare Edge terminates public HTTPS/SSL. Selecting `HTTPS` in Zero Trust causes `cloudflared` to attempt a TLS handshake against port 80, resulting in `502 Bad Gateway` (`tls: first record does not look like a TLS handshake`).
+
+### 2. Run Container with Cloudflare Tunnel
+
+Once `CLOUDFLARE_TUNNEL_TOKEN` is set in your `.env` file, start the container:
+
+**Using Docker:**
+```bash
+# Build the image with embedded cloudflared
+docker build -t store_gateway .
+
+# Run with environment file
+docker run -d \
+  --name store_gateway \
+  --restart unless-stopped \
+  -p 80:80 \
+  -p 8000:80 \
+  --env-file .env \
+  store_gateway
+```
+
+**Using Podman (on existing `store-network`):**
+```bash
+# Build the image
+podman build -t store_gateway .
+
+# Run on the store network alongside microservices
+podman run -d \
+  --name store_gateway \
+  --network store-network \
+  --restart unless-stopped \
+  -p 80:80 \
+  -p 8000:80 \
+  --env-file .env \
+  store_gateway
+```
+
+> **Note**: If `CLOUDFLARE_TUNNEL_TOKEN` is omitted or empty, the container gracefully falls back to standalone NGINX mode.
+
+---
+
 ## 🧪 Local Testing & Verification
 
 ### Run Automated Test Suite
@@ -227,9 +504,14 @@ npm test
 # 1. Health Probe (Expect 200 OK JSON {"status":"UP","service":"store_gateway"})
 curl -i http://localhost/health
 
-# 2. CORS Preflight Check (Expect 204 No Content with CORS allow headers)
+# 2. CORS Preflight Check - Localhost (Expect 204 No Content with CORS allow headers)
 curl -i -X OPTIONS http://localhost/api/v1/orders \
   -H "Origin: http://localhost:3000" \
+  -H "Access-Control-Request-Method: POST"
+
+# 2b. CORS Preflight Check - Custom Domain (When CORS_ALLOWED_ORIGIN_REGEX matches yourdomain.com)
+curl -i -X OPTIONS http://localhost/api/v1/orders \
+  -H "Origin: https://yourdomain.com" \
   -H "Access-Control-Request-Method: POST"
 
 # 3. RS256 JWKS Public Key Retrieval (Expect 200 OK with JWKS JSON)
@@ -287,10 +569,12 @@ curl -i http://localhost/docs/users/openapi.yaml
 
 ```
 store_gateway/
-├── Dockerfile                           # Lean Alpine-based NGINX container image
+├── Dockerfile                           # Lean Alpine-based NGINX + cloudflared container image
 ├── .env.example                         # Environment variable template
 ├── .gitignore                           # Git ignore rules (protects .env and .agent)
 ├── .dockerignore                        # Docker build ignore rules
+├── scripts/
+│   └── 40-start-cloudflared.sh          # Container startup hook for Cloudflare Tunnel
 ├── nginx/
 │   ├── nginx.conf                       # Main NGINX context with trace ID mapping & logging
 │   ├── templates/
@@ -308,3 +592,4 @@ store_gateway/
 ├── package.json                         # Automated test scripts and dependencies
 └── README.md                            # Comprehensive documentation & developer guide
 ```
+

@@ -395,22 +395,58 @@ describe('Gateway Authentication Offloading & Token Verification Suite', () => {
     orderPort = orderServer.address().port;
     userPort = userServer.address().port;
 
+    const corsAllowedRegex = new RegExp(process.env.CORS_ALLOWED_ORIGIN_REGEX || '^https?://(localhost|127\\.0\\.0\\.1)(:[0-9]+)?$');
+
+    /**
+     * Helper to evaluate request origin against allowed origin regex.
+     * Explains 'Why': Replicates NGINX dynamic $cors_origin map behavior.
+     * @param {string} origin - Incoming HTTP Origin header.
+     * @returns {string} Matching origin string or empty string.
+     */
+    function evaluateCorsOrigin(origin) {
+      if (!origin) return '';
+      return corsAllowedRegex.test(origin) ? origin : '';
+    }
+
     // 5. Gateway Simulator adhering strictly to store_gateway NGINX rules
     gatewaySimulator = http.createServer(async (req, res) => {
+      const origin = req.headers['origin'] || '';
+      const matchedCorsOrigin = evaluateCorsOrigin(origin);
+
       // CORS Preflight
       if (req.method === 'OPTIONS') {
-        res.writeHead(204, {
-          'Access-Control-Allow-Origin': req.headers['origin'] || '*',
+        const corsHeaders = {
           'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-          'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Request-ID',
-          'Access-Control-Allow-Credentials': 'true',
-          'Access-Control-Max-Age': '86400'
-        });
+          'Access-Control-Allow-Headers': 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Request-ID',
+          'Access-Control-Max-Age': '86400',
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Content-Length': '0'
+        };
+        if (matchedCorsOrigin) {
+          corsHeaders['Access-Control-Allow-Origin'] = matchedCorsOrigin;
+          corsHeaders['Access-Control-Allow-Credentials'] = 'true';
+        }
+        res.writeHead(204, corsHeaders);
         res.end();
         return;
       }
 
       const requestId = req.headers['x-request-id'] || `req-${crypto.randomUUID()}`;
+
+      /**
+       * Helper to attach standard CORS and security headers to proxied response.
+       * @param {object} headers - Upstream response headers.
+       * @returns {object} Augmented headers.
+       */
+      function applyGatewayResponseHeaders(headers) {
+        const responseHeaders = { ...headers };
+        if (matchedCorsOrigin) {
+          responseHeaders['Access-Control-Allow-Origin'] = matchedCorsOrigin;
+          responseHeaders['Access-Control-Allow-Credentials'] = 'true';
+        }
+        responseHeaders['X-Request-ID'] = requestId;
+        return responseHeaders;
+      }
 
       // Routing: Auth Service (v1 and alias)
       if (req.url.startsWith('/api/auth/') || req.url.startsWith('/api/v1/auth/') || req.url === '/.well-known/jwks.json') {
@@ -428,7 +464,7 @@ describe('Gateway Authentication Offloading & Token Verification Suite', () => {
           method: req.method,
           headers: sanitizedHeaders
         }, (proxyRes) => {
-          res.writeHead(proxyRes.statusCode, proxyRes.headers);
+          res.writeHead(proxyRes.statusCode, applyGatewayResponseHeaders(proxyRes.headers));
           proxyRes.pipe(res);
         });
         req.pipe(proxyReq);
@@ -488,7 +524,7 @@ describe('Gateway Authentication Offloading & Token Verification Suite', () => {
           method: req.method,
           headers: sanitizedHeaders
         }, (proxyRes) => {
-          res.writeHead(proxyRes.statusCode, proxyRes.headers);
+          res.writeHead(proxyRes.statusCode, applyGatewayResponseHeaders(proxyRes.headers));
           proxyRes.pipe(res);
         });
         req.pipe(proxyReq);
@@ -554,7 +590,7 @@ describe('Gateway Authentication Offloading & Token Verification Suite', () => {
           method: req.method,
           headers: sanitizedHeaders
         }, (proxyRes) => {
-          res.writeHead(proxyRes.statusCode, proxyRes.headers);
+          res.writeHead(proxyRes.statusCode, applyGatewayResponseHeaders(proxyRes.headers));
           proxyRes.pipe(res);
         });
         req.pipe(proxyReq);
@@ -620,7 +656,7 @@ describe('Gateway Authentication Offloading & Token Verification Suite', () => {
           method: req.method,
           headers: sanitizedHeaders
         }, (proxyRes) => {
-          res.writeHead(proxyRes.statusCode, proxyRes.headers);
+          res.writeHead(proxyRes.statusCode, applyGatewayResponseHeaders(proxyRes.headers));
           proxyRes.pipe(res);
         });
         req.pipe(proxyReq);
@@ -680,7 +716,7 @@ describe('Gateway Authentication Offloading & Token Verification Suite', () => {
           method: req.method,
           headers: sanitizedHeaders
         }, (proxyRes) => {
-          res.writeHead(proxyRes.statusCode, proxyRes.headers);
+          res.writeHead(proxyRes.statusCode, applyGatewayResponseHeaders(proxyRes.headers));
           proxyRes.pipe(res);
         });
         req.pipe(proxyReq);
@@ -944,5 +980,56 @@ describe('Gateway Authentication Offloading & Token Verification Suite', () => {
     assert.equal(res.status, 401);
     const data = await res.json();
     assert.equal(data.error, 'unauthorized');
+  });
+
+  test('Step 17: Centralized CORS: Preflight OPTIONS request with matching localhost Origin returns 204 with Access-Control-Allow-Origin and Credentials', async () => {
+    const res = await fetch(`http://127.0.0.1:${gatewayPort}/api/v1/products`, {
+      method: 'OPTIONS',
+      headers: {
+        'Origin': 'http://localhost:3000',
+        'Access-Control-Request-Method': 'POST'
+      }
+    });
+
+    assert.equal(res.status, 204);
+    assert.equal(res.headers.get('access-control-allow-origin'), 'http://localhost:3000');
+    assert.equal(res.headers.get('access-control-allow-credentials'), 'true');
+    assert.equal(res.headers.get('access-control-max-age'), '86400');
+  });
+
+  test('Step 18: Centralized CORS: Preflight OPTIONS request with disallowed Origin does not return Access-Control-Allow-Origin', async () => {
+    const res = await fetch(`http://127.0.0.1:${gatewayPort}/api/v1/products`, {
+      method: 'OPTIONS',
+      headers: {
+        'Origin': 'https://malicious-site.com',
+        'Access-Control-Request-Method': 'POST'
+      }
+    });
+
+    assert.equal(res.status, 204);
+    assert.equal(res.headers.get('access-control-allow-origin'), null);
+  });
+
+  test('Step 19: Centralized CORS: Standard proxied GET request with matching Origin returns Access-Control-Allow-Origin and Credentials', async () => {
+    const res = await fetch(`http://127.0.0.1:${gatewayPort}/api/products`, {
+      headers: {
+        'Origin': 'http://localhost:5173'
+      }
+    });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('access-control-allow-origin'), 'http://localhost:5173');
+    assert.equal(res.headers.get('access-control-allow-credentials'), 'true');
+  });
+
+  test('Step 20: Centralized CORS: Standard proxied GET request with disallowed Origin does not return Access-Control-Allow-Origin', async () => {
+    const res = await fetch(`http://127.0.0.1:${gatewayPort}/api/products`, {
+      headers: {
+        'Origin': 'https://attacker.com'
+      }
+    });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('access-control-allow-origin'), null);
   });
 });

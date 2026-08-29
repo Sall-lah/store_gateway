@@ -9,6 +9,13 @@ map "${ENABLE_DOCS}" $docs_disabled {
     default 0;
 }
 
+# Map dynamic CORS origin validation using configured regex
+# Explain 'Why': Evaluates incoming client Origin against CORS_ALLOWED_ORIGIN_REGEX to allow credentials safely on configured frontend domains.
+map $http_origin $cors_origin {
+    default "";
+    "~${CORS_ALLOWED_ORIGIN_REGEX}" "$http_origin";
+}
+
 server {
     listen ${GATEWAY_PORT} default_server;
     listen [::]:${GATEWAY_PORT} default_server;
@@ -402,7 +409,7 @@ server {
         return 302 /docs/products/scalar/;
     }
 
-    location = /docs/products/scalar {
+    location /docs/products/scalar {
         if ($docs_disabled) {
             return 404;
         }

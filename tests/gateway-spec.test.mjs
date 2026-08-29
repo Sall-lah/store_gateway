@@ -38,6 +38,7 @@ describe('Store Gateway Specification & Feature Verification', () => {
         'nginx/snippets/auth-offload-mutation.conf',
         'nginx/snippets/proxy-params.conf',
         'nginx/snippets/security-headers.conf',
+        'scripts/40-start-cloudflared.sh',
         'Dockerfile',
         '.env.example',
         '.gitignore',
@@ -60,7 +61,6 @@ describe('Store Gateway Specification & Feature Verification', () => {
       assert.match(content, /worker_connections\s+1024;/, 'Worker connections must be 1024');
       assert.match(content, /\$request_id/, 'Log format must capture $request_id for tracing');
       assert.match(content, /map\s+\$http_x_request_id\s+\$req_id/, 'Must map incoming or generated trace ID');
-      assert.match(content, /map\s+\$http_origin\s+\$cors_origin/, 'Must dynamically validate CORS origin');
       assert.match(content, /include\s+\/etc\/nginx\/conf\.d\/\*\.conf;/, 'Must include generated virtual hosts');
     });
   });
@@ -95,7 +95,7 @@ describe('Store Gateway Specification & Feature Verification', () => {
     });
   });
 
-  describe('4. Centralized CORS Management', () => {
+  describe('4. Centralized CORS Management & Dynamic Origin Evaluation', () => {
     test('cors snippet must handle preflight OPTIONS with 204 and headers', () => {
       const content = readProjectFile('nginx/snippets/cors.conf');
 
@@ -105,6 +105,43 @@ describe('Store Gateway Specification & Feature Verification', () => {
       assert.match(content, /Access-Control-Allow-Credentials'?\s+'true'/, 'Must support credentials');
       assert.match(content, /Access-Control-Max-Age'?\s+86400/, 'Must cache preflight for 24h');
       assert.match(content, /proxy_hide_header\s+'Access-Control-Allow-Origin';/, 'Must suppress upstream duplicate CORS');
+    });
+
+    test('evaluates default CORS origin regex against localhost and disallowed origins', () => {
+      const defaultRegex = new RegExp('^https?://(localhost|127\\.0\\.0\\.1)(:[0-9]+)?$');
+
+      // Valid localhost and 127.0.0.1 variants
+      assert.ok(defaultRegex.test('http://localhost'), 'Must match http://localhost');
+      assert.ok(defaultRegex.test('http://localhost:3000'), 'Must match http://localhost:3000');
+      assert.ok(defaultRegex.test('http://localhost:5173'), 'Must match http://localhost:5173');
+      assert.ok(defaultRegex.test('https://localhost:8443'), 'Must match https://localhost:8443');
+      assert.ok(defaultRegex.test('http://127.0.0.1'), 'Must match http://127.0.0.1');
+      assert.ok(defaultRegex.test('http://127.0.0.1:8080'), 'Must match http://127.0.0.1:8080');
+      assert.ok(defaultRegex.test('https://127.0.0.1:443'), 'Must match https://127.0.0.1:443');
+
+      // Disallowed origins
+      assert.ok(!defaultRegex.test('https://yourdomain.com'), 'Must reject custom domain under default localhost regex');
+      assert.ok(!defaultRegex.test('https://malicious-site.com'), 'Must reject untrusted domains');
+      assert.ok(!defaultRegex.test('http://localhost.attacker.com'), 'Must reject subdomain spoofing of localhost');
+      assert.ok(!defaultRegex.test('http://127.0.0.1.attacker.com'), 'Must reject subdomain spoofing of 127.0.0.1');
+      assert.ok(!defaultRegex.test('https://evil-localhost:3000'), 'Must reject prefix spoofing');
+    });
+
+    test('evaluates custom domain and subdomain regex configurations', () => {
+      // Single custom domain configuration
+      const singleDomainRegex = new RegExp('^https?://(yourdomain\\.com)(:[0-9]+)?$');
+      assert.ok(singleDomainRegex.test('https://yourdomain.com'), 'Must match custom domain');
+      assert.ok(singleDomainRegex.test('https://yourdomain.com:8443'), 'Must match custom domain with port');
+      assert.ok(!singleDomainRegex.test('https://evil-yourdomain.com'), 'Must reject lookalike domain');
+      assert.ok(!singleDomainRegex.test('https://attacker.com'), 'Must reject attacker origin');
+
+      // Wildcard subdomains + localhost configuration
+      const multiDomainRegex = new RegExp('^https?://(localhost|127\\.0\\.0\\.1|yourdomain\\.com|([a-zA-Z0-9-]+\\.)+yourdomain\\.com)(:[0-9]+)?$');
+      assert.ok(multiDomainRegex.test('http://localhost:3000'), 'Must match localhost in multi-domain config');
+      assert.ok(multiDomainRegex.test('https://yourdomain.com'), 'Must match apex domain');
+      assert.ok(multiDomainRegex.test('https://app.yourdomain.com'), 'Must match app subdomain');
+      assert.ok(multiDomainRegex.test('https://admin.store.yourdomain.com'), 'Must match nested subdomain');
+      assert.ok(!multiDomainRegex.test('https://yourdomain.com.evil.com'), 'Must reject domain suffix attack');
     });
   });
 
@@ -123,11 +160,15 @@ describe('Store Gateway Specification & Feature Verification', () => {
   });
 
   describe('6. Virtual Host Template & Route Mapping', () => {
-    test('default.conf.template must map all active services and docs routes', () => {
+    test('default.conf.template must map all active services, dynamic CORS origin, and docs routes', () => {
       const content = readProjectFile('nginx/templates/default.conf.template');
 
       // Health probe
       assert.match(content, /location\s*=\s*\/health/, 'Must define /health endpoint');
+
+      // Dynamic CORS origin mapping
+      assert.match(content, /map\s+\$http_origin\s+\$cors_origin/, 'Must define dynamic $cors_origin map');
+      assert.match(content, /"~?\$\{CORS_ALLOWED_ORIGIN_REGEX\}"/, 'Must evaluate $cors_origin against CORS_ALLOWED_ORIGIN_REGEX');
 
       // Auth Service routes (v1 standard and aliases)
       assert.match(content, /location\s+\/api\/auth\/\s*\{[\s\S]*?proxy_pass\s+\$\{AUTH_SERVICE_URL\}\/api\/auth\//, 'Must proxy /api/auth/ to Auth');
@@ -165,6 +206,11 @@ describe('Store Gateway Specification & Feature Verification', () => {
       assert.match(content, /location\s+\/docs\/users\/swagger\s*\{[\s\S]*?proxy_pass\s+\$\{USER_SERVICE_URL\}\/swagger/, 'Must proxy /docs/users/swagger to User Swagger UI');
       assert.match(content, /location\s*=\s*\/docs\/users\/openapi\.json\s*\{[\s\S]*?proxy_pass\s+\$\{USER_SERVICE_URL\}\/docs\/openapi\.json/, 'Must proxy /docs/users/openapi.json');
       assert.match(content, /location\s*=\s*\/docs\/users\/openapi\.yaml\s*\{[\s\S]*?proxy_pass\s+\$\{USER_SERVICE_URL\}\/docs\/openapi\.yaml/, 'Must proxy /docs/users/openapi.yaml');
+
+      // Documentation relies on upstream relative path resolution without gateway sub_filters
+      assert.ok(!content.includes('sub_filter'), 'Must not contain sub_filter directives in clean relative proxy mode');
+      assert.ok(!content.includes('location = /openapi.json'), 'Must not contain legacy root /openapi.json fallback');
+      assert.ok(!content.includes('location = /docs/openapi.yaml'), 'Must not contain legacy root /docs/openapi.yaml fallback');
     });
 
     test('template substitution must produce valid NGINX configuration', () => {
@@ -172,6 +218,7 @@ describe('Store Gateway Specification & Feature Verification', () => {
       const rendered = template
         .replaceAll('${GATEWAY_PORT}', '80')
         .replaceAll('${ENABLE_DOCS}', 'true')
+        .replaceAll('${CORS_ALLOWED_ORIGIN_REGEX}', '^https?://(localhost|127\\.0\\.0\\.1)(:[0-9]+)?$')
         .replaceAll('${AUTH_SERVICE_URL}', 'http://auth-service:8080')
         .replaceAll('${PRODUCT_SERVICE_URL}', 'http://product-service:8040')
         .replaceAll('${ORDER_SERVICE_URL}', 'http://order-service:8060')
@@ -179,11 +226,13 @@ describe('Store Gateway Specification & Feature Verification', () => {
 
       assert.ok(!rendered.includes('${GATEWAY_PORT}'), 'GATEWAY_PORT variable should be replaced');
       assert.ok(!rendered.includes('${ENABLE_DOCS}'), 'ENABLE_DOCS variable should be replaced');
+      assert.ok(!rendered.includes('${CORS_ALLOWED_ORIGIN_REGEX}'), 'CORS_ALLOWED_ORIGIN_REGEX variable should be replaced');
       assert.ok(!rendered.includes('${AUTH_SERVICE_URL}'), 'AUTH_SERVICE_URL variable should be replaced');
       assert.ok(!rendered.includes('${PRODUCT_SERVICE_URL}'), 'PRODUCT_SERVICE_URL variable should be replaced');
       assert.ok(!rendered.includes('${ORDER_SERVICE_URL}'), 'ORDER_SERVICE_URL variable should be replaced');
       assert.ok(!rendered.includes('${USER_SERVICE_URL}'), 'USER_SERVICE_URL variable should be replaced');
       assert.ok(rendered.includes('listen 80 default_server;'), 'Must render listen 80');
+      assert.ok(rendered.includes('"~^https?://(localhost|127\\.0\\.0\\.1)(:[0-9]+)?$" "$http_origin";'), 'Must render dynamic cors map');
       assert.ok(rendered.includes('http://auth-service:8080/api/auth/'), 'Must render auth upstream');
       assert.ok(rendered.includes('http://product-service:8040/api/v1/products'), 'Must render product upstream');
       assert.ok(rendered.includes('http://product-service:8040/api/v1/admin/products'), 'Must render admin product upstream');
@@ -195,11 +244,22 @@ describe('Store Gateway Specification & Feature Verification', () => {
   describe('7. Docker & Environment Security', () => {
     test('Dockerfile must set NGINX_ENVSUBST_FILTER to protect internal NGINX vars', () => {
       const dockerfile = readProjectFile('Dockerfile');
+      assert.match(dockerfile, /NGINX_ENVSUBST_FILTER=".*CORS_ALLOWED_ORIGIN_REGEX.*"/, 'Must define filter for envsubst including CORS_ALLOWED_ORIGIN_REGEX');
       assert.match(dockerfile, /NGINX_ENVSUBST_FILTER=".*USER_SERVICE_URL.*"/, 'Must define filter for envsubst including USER_SERVICE_URL');
       assert.match(dockerfile, /ENABLE_DOCS=true/, 'Dockerfile must set default ENABLE_DOCS=true');
+      assert.match(dockerfile, /CORS_ALLOWED_ORIGIN_REGEX=/, 'Dockerfile must set default CORS_ALLOWED_ORIGIN_REGEX');
       assert.match(dockerfile, /ORDER_SERVICE_URL=http:\/\/order-service:8060/, 'Dockerfile must set default ORDER_SERVICE_URL');
       assert.match(dockerfile, /USER_SERVICE_URL=http:\/\/user-service:8082/, 'Dockerfile must set default USER_SERVICE_URL');
       assert.match(dockerfile, /HEALTHCHECK/, 'Dockerfile must include HEALTHCHECK');
+    });
+
+    test('Dockerfile embeds cloudflared with multi-stage build, ca-certificates, and entrypoint hook', () => {
+      const dockerfile = readProjectFile('Dockerfile');
+      assert.match(dockerfile, /FROM cloudflare\/cloudflared:latest AS cloudflared-bin/, 'Must use multi-stage build for cloudflared');
+      assert.match(dockerfile, /apk add --no-cache ca-certificates/, 'Must install ca-certificates for TLS handshakes');
+      assert.match(dockerfile, /COPY --from=cloudflared-bin \/usr\/local\/bin\/cloudflared \/usr\/local\/bin\/cloudflared/, 'Must copy cloudflared binary');
+      assert.match(dockerfile, /COPY scripts\/40-start-cloudflared\.sh \/docker-entrypoint\.d\/40-start-cloudflared\.sh/, 'Must copy startup script to docker-entrypoint.d');
+      assert.match(dockerfile, /chmod \+x \/docker-entrypoint\.d\/40-start-cloudflared\.sh/, 'Must ensure entrypoint script is executable');
     });
 
     test('.gitignore and .dockerignore must protect .env and .agent', () => {
@@ -212,17 +272,28 @@ describe('Store Gateway Specification & Feature Verification', () => {
       assert.match(dockerignore, /\.agent\//, '.dockerignore must ignore .agent/');
     });
 
-    test('.env.example must declare downstream services and gateway configuration', () => {
+    test('.env.example must declare downstream services, gateway configuration, and tunnel token', () => {
       const envExample = readProjectFile('.env.example');
       assert.match(envExample, /AUTH_SERVICE_URL=/, 'Must specify AUTH_SERVICE_URL');
       assert.match(envExample, /PRODUCT_SERVICE_URL=/, 'Must specify PRODUCT_SERVICE_URL');
       assert.match(envExample, /ORDER_SERVICE_URL=/, 'Must specify ORDER_SERVICE_URL');
       assert.match(envExample, /USER_SERVICE_URL=/, 'Must specify USER_SERVICE_URL');
       assert.match(envExample, /GATEWAY_PORT=/, 'Must specify GATEWAY_PORT');
+      assert.match(envExample, /CORS_ALLOWED_ORIGIN_REGEX=/, 'Must specify CORS_ALLOWED_ORIGIN_REGEX');
+      assert.match(envExample, /CLOUDFLARE_TUNNEL_TOKEN=/, 'Must document CLOUDFLARE_TUNNEL_TOKEN');
     });
   });
 
-  describe('8. Mock Upstream Microservices Contract Simulation', () => {
+  describe('8. Cloudflare Tunnel Startup Hook Verification', () => {
+    test('40-start-cloudflared.sh checks CLOUDFLARE_TUNNEL_TOKEN and falls back to standalone NGINX', () => {
+      const script = readProjectFile('scripts/40-start-cloudflared.sh');
+      assert.match(script, /if\s*\[\s*-n\s*"\$CLOUDFLARE_TUNNEL_TOKEN"\s*\];?\s*then/, 'Must check for non-empty token');
+      assert.match(script, /cloudflared tunnel --no-autoupdate run --token "\$CLOUDFLARE_TUNNEL_TOKEN"\s*&/, 'Must launch tunnel in background');
+      assert.match(script, /CLOUDFLARE_TUNNEL_TOKEN not set/, 'Must log standalone fallback message');
+    });
+  });
+
+  describe('9. Mock Upstream Microservices Contract Simulation', () => {
     test('validates downstream service JWKS and docs endpoints response contracts', async () => {
       // Explain 'Why': Spins up simulated Auth, Product, Order, and User microservice endpoints in memory to verify contract schemas.
       const authServer = http.createServer((req, res) => {

@@ -67,3 +67,5 @@ The API gateway SHALL evaluate the `ENABLE_DOCS` environment configuration at st
 #### Scenario: Documentation disabled in production
 - **WHEN** gateway runs with `ENABLE_DOCS=false` (or `0` or `off`) and client requests any `/docs*` endpoint
 - **THEN** gateway immediately returns HTTP 404 Not Found without forwarding requests downstream
+
+
