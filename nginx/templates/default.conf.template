@@ -24,6 +24,18 @@ server {
     # Explain 'Why': Include baseline security headers across all responses.
     include /etc/nginx/snippets/security-headers.conf;
 
+    # Explain 'Why': Runtime DNS resolver enables dynamic upstream re-resolution every 5s,
+    # preventing stale IP caching when backend containers restart on Docker bridge networks.
+    resolver ${DNS_RESOLVER} valid=5s ipv6=off;
+    resolver_timeout 3s;
+
+    # Explain 'Why': Assigning upstream URLs to NGINX variables forces NGINX to resolve hostnames
+    # dynamically via the configured resolver instead of statically at startup.
+    set $auth_backend "${AUTH_SERVICE_URL}";
+    set $product_backend "${PRODUCT_SERVICE_URL}";
+    set $order_backend "${ORDER_SERVICE_URL}";
+    set $user_backend "${USER_SERVICE_URL}";
+
     # -------------------------------------------------------------------------
     # Internal Auth Subrequest Verification
     # -------------------------------------------------------------------------
@@ -35,7 +47,7 @@ server {
             return 200;
         }
 
-        proxy_pass ${AUTH_SERVICE_URL}/api/auth/me;
+        proxy_pass $auth_backend/api/auth/me;
         proxy_pass_request_body off;
         proxy_set_header Content-Length "";
         proxy_set_header X-Original-URI $request_uri;
@@ -53,7 +65,7 @@ server {
             return 200;
         }
 
-        proxy_pass ${AUTH_SERVICE_URL}/api/auth/me;
+        proxy_pass $auth_backend/api/auth/me;
         proxy_pass_request_body off;
         proxy_set_header Content-Length "";
         proxy_set_header X-Original-URI $request_uri;
@@ -82,7 +94,7 @@ server {
         include /etc/nginx/snippets/anti-spoofing.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${AUTH_SERVICE_URL}/api/auth/;
+        proxy_pass $auth_backend$request_uri;
     }
 
     location = /api/auth {
@@ -90,7 +102,7 @@ server {
         include /etc/nginx/snippets/anti-spoofing.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${AUTH_SERVICE_URL}/api/auth;
+        proxy_pass $auth_backend/api/auth;
     }
 
     location /api/v1/auth/ {
@@ -98,7 +110,8 @@ server {
         include /etc/nginx/snippets/anti-spoofing.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${AUTH_SERVICE_URL}/api/auth/;
+        rewrite ^/api/v1/auth/(.*)$ /api/auth/$1 break;
+        proxy_pass $auth_backend;
     }
 
     location = /api/v1/auth {
@@ -106,7 +119,8 @@ server {
         include /etc/nginx/snippets/anti-spoofing.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${AUTH_SERVICE_URL}/api/auth;
+        rewrite ^ /api/auth break;
+        proxy_pass $auth_backend;
     }
 
     # Explain 'Why': Public RS256 JWKS key distribution endpoint consumed by frontend and downstream microservices.
@@ -114,7 +128,7 @@ server {
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${AUTH_SERVICE_URL}/.well-known/jwks.json;
+        proxy_pass $auth_backend/.well-known/jwks.json;
     }
 
     # -------------------------------------------------------------------------
@@ -127,7 +141,8 @@ server {
         include /etc/nginx/snippets/auth-offload-mutation.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${PRODUCT_SERVICE_URL}/api/v1/products/;
+        rewrite ^/api/products/(.*)$ /api/v1/products/$1 break;
+        proxy_pass $product_backend;
     }
 
     location = /api/products {
@@ -136,7 +151,8 @@ server {
         include /etc/nginx/snippets/auth-offload-mutation.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${PRODUCT_SERVICE_URL}/api/v1/products;
+        rewrite ^ /api/v1/products break;
+        proxy_pass $product_backend;
     }
 
     location /api/v1/products/ {
@@ -145,7 +161,7 @@ server {
         include /etc/nginx/snippets/auth-offload-mutation.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${PRODUCT_SERVICE_URL}/api/v1/products/;
+        proxy_pass $product_backend$request_uri;
     }
 
     location = /api/v1/products {
@@ -154,7 +170,7 @@ server {
         include /etc/nginx/snippets/auth-offload-mutation.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${PRODUCT_SERVICE_URL}/api/v1/products;
+        proxy_pass $product_backend/api/v1/products;
     }
 
     # Explain 'Why': Routes /api/admin/products/* and /api/v1/admin/products/* to product_service while applying CORS, anti-spoofing, auth offload, and proxy headers.
@@ -164,7 +180,8 @@ server {
         include /etc/nginx/snippets/auth-offload.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${PRODUCT_SERVICE_URL}/api/v1/admin/products/;
+        rewrite ^/api/admin/products/(.*)$ /api/v1/admin/products/$1 break;
+        proxy_pass $product_backend;
     }
 
     location = /api/admin/products {
@@ -173,7 +190,8 @@ server {
         include /etc/nginx/snippets/auth-offload.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${PRODUCT_SERVICE_URL}/api/v1/admin/products;
+        rewrite ^ /api/v1/admin/products break;
+        proxy_pass $product_backend;
     }
 
     location /api/v1/admin/products/ {
@@ -182,7 +200,7 @@ server {
         include /etc/nginx/snippets/auth-offload.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${PRODUCT_SERVICE_URL}/api/v1/admin/products/;
+        proxy_pass $product_backend$request_uri;
     }
 
     location = /api/v1/admin/products {
@@ -191,7 +209,7 @@ server {
         include /etc/nginx/snippets/auth-offload.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${PRODUCT_SERVICE_URL}/api/v1/admin/products;
+        proxy_pass $product_backend/api/v1/admin/products;
     }
 
     # Explain 'Why': External payment provider webhooks (e.g. Midtrans) send unauthenticated notifications that must not be blocked by user auth subrequests.
@@ -200,7 +218,8 @@ server {
         include /etc/nginx/snippets/anti-spoofing.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${ORDER_SERVICE_URL}/api/v1/orders/webhook/;
+        rewrite ^/api/orders/webhook/(.*)$ /api/v1/orders/webhook/$1 break;
+        proxy_pass $order_backend;
     }
 
     location /api/v1/orders/webhook/ {
@@ -208,7 +227,7 @@ server {
         include /etc/nginx/snippets/anti-spoofing.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${ORDER_SERVICE_URL}/api/v1/orders/webhook/;
+        proxy_pass $order_backend$request_uri;
     }
 
     # Explain 'Why': Routes /api/admin/orders/* and /api/v1/admin/orders/* to order_service while applying CORS, anti-spoofing, auth offload, and proxy headers.
@@ -218,7 +237,8 @@ server {
         include /etc/nginx/snippets/auth-offload.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${ORDER_SERVICE_URL}/api/v1/admin/orders/;
+        rewrite ^/api/admin/orders/(.*)$ /api/v1/admin/orders/$1 break;
+        proxy_pass $order_backend;
     }
 
     location = /api/admin/orders {
@@ -227,7 +247,8 @@ server {
         include /etc/nginx/snippets/auth-offload.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${ORDER_SERVICE_URL}/api/v1/admin/orders;
+        rewrite ^ /api/v1/admin/orders break;
+        proxy_pass $order_backend;
     }
 
     location /api/v1/admin/orders/ {
@@ -236,7 +257,7 @@ server {
         include /etc/nginx/snippets/auth-offload.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${ORDER_SERVICE_URL}/api/v1/admin/orders/;
+        proxy_pass $order_backend$request_uri;
     }
 
     location = /api/v1/admin/orders {
@@ -245,7 +266,7 @@ server {
         include /etc/nginx/snippets/auth-offload.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${ORDER_SERVICE_URL}/api/v1/admin/orders;
+        proxy_pass $order_backend/api/v1/admin/orders;
     }
 
     # Explain 'Why': Routes /api/dev/orders/* and /api/v1/dev/orders/* to order_service development testing and simulation endpoints.
@@ -254,7 +275,8 @@ server {
         include /etc/nginx/snippets/anti-spoofing.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${ORDER_SERVICE_URL}/api/v1/dev/orders/;
+        rewrite ^/api/dev/orders/(.*)$ /api/v1/dev/orders/$1 break;
+        proxy_pass $order_backend;
     }
 
     location = /api/dev/orders {
@@ -262,7 +284,8 @@ server {
         include /etc/nginx/snippets/anti-spoofing.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${ORDER_SERVICE_URL}/api/v1/dev/orders;
+        rewrite ^ /api/v1/dev/orders break;
+        proxy_pass $order_backend;
     }
 
     location /api/v1/dev/orders/ {
@@ -270,7 +293,7 @@ server {
         include /etc/nginx/snippets/anti-spoofing.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${ORDER_SERVICE_URL}/api/v1/dev/orders/;
+        proxy_pass $order_backend$request_uri;
     }
 
     location = /api/v1/dev/orders {
@@ -278,7 +301,7 @@ server {
         include /etc/nginx/snippets/anti-spoofing.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${ORDER_SERVICE_URL}/api/v1/dev/orders;
+        proxy_pass $order_backend/api/v1/dev/orders;
     }
 
     # -------------------------------------------------------------------------
@@ -291,7 +314,8 @@ server {
         include /etc/nginx/snippets/auth-offload.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${ORDER_SERVICE_URL}/api/v1/orders/;
+        rewrite ^/api/orders/(.*)$ /api/v1/orders/$1 break;
+        proxy_pass $order_backend;
     }
 
     location = /api/orders {
@@ -300,7 +324,8 @@ server {
         include /etc/nginx/snippets/auth-offload.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${ORDER_SERVICE_URL}/api/v1/orders;
+        rewrite ^ /api/v1/orders break;
+        proxy_pass $order_backend;
     }
 
     location /api/v1/orders/ {
@@ -309,7 +334,7 @@ server {
         include /etc/nginx/snippets/auth-offload.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${ORDER_SERVICE_URL}/api/v1/orders/;
+        proxy_pass $order_backend$request_uri;
     }
 
     location = /api/v1/orders {
@@ -318,7 +343,7 @@ server {
         include /etc/nginx/snippets/auth-offload.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${ORDER_SERVICE_URL}/api/v1/orders;
+        proxy_pass $order_backend/api/v1/orders;
     }
 
     # -------------------------------------------------------------------------
@@ -331,7 +356,7 @@ server {
         include /etc/nginx/snippets/auth-offload.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${USER_SERVICE_URL}/api/users/;
+        proxy_pass $user_backend$request_uri;
     }
 
     location = /api/users {
@@ -340,7 +365,7 @@ server {
         include /etc/nginx/snippets/auth-offload.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${USER_SERVICE_URL}/api/users;
+        proxy_pass $user_backend/api/users;
     }
 
     location /api/v1/users/ {
@@ -349,7 +374,8 @@ server {
         include /etc/nginx/snippets/auth-offload.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${USER_SERVICE_URL}/api/users/;
+        rewrite ^/api/v1/users/(.*)$ /api/users/$1 break;
+        proxy_pass $user_backend;
     }
 
     location = /api/v1/users {
@@ -358,7 +384,8 @@ server {
         include /etc/nginx/snippets/auth-offload.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${USER_SERVICE_URL}/api/users;
+        rewrite ^ /api/users break;
+        proxy_pass $user_backend;
     }
 
     # -------------------------------------------------------------------------
@@ -388,7 +415,8 @@ server {
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${AUTH_SERVICE_URL}/docs/;
+        rewrite ^/docs/auth/(.*)$ /docs/$1 break;
+        proxy_pass $auth_backend;
     }
 
     location = /docs/auth/openapi.yaml {
@@ -398,7 +426,7 @@ server {
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${AUTH_SERVICE_URL}/docs/openapi.yaml;
+        proxy_pass $auth_backend/docs/openapi.yaml;
     }
 
     # Product Service Documentation
@@ -423,7 +451,8 @@ server {
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${PRODUCT_SERVICE_URL}/docs/;
+        rewrite ^/docs/products/scalar/(.*)$ /docs/$1 break;
+        proxy_pass $product_backend;
     }
 
     location = /docs/products/swagger {
@@ -440,7 +469,8 @@ server {
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${PRODUCT_SERVICE_URL}/swagger/;
+        rewrite ^/docs/products/swagger/(.*)$ /swagger/$1 break;
+        proxy_pass $product_backend;
     }
 
     location = /docs/products/openapi.json {
@@ -450,7 +480,7 @@ server {
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${PRODUCT_SERVICE_URL}/openapi.json;
+        proxy_pass $product_backend/openapi.json;
     }
 
     location = /docs/products/openapi.yaml {
@@ -460,7 +490,7 @@ server {
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${PRODUCT_SERVICE_URL}/openapi.yaml;
+        proxy_pass $product_backend/openapi.yaml;
     }
 
     # Order Service Documentation
@@ -471,7 +501,8 @@ server {
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${ORDER_SERVICE_URL}/docs;
+        rewrite ^ /docs break;
+        proxy_pass $order_backend;
     }
 
     location /docs/orders/scalar {
@@ -481,7 +512,8 @@ server {
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${ORDER_SERVICE_URL}/docs;
+        rewrite ^/docs/orders/scalar(.*)$ /docs$1 break;
+        proxy_pass $order_backend;
     }
 
     location /docs/orders/swagger {
@@ -491,7 +523,8 @@ server {
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${ORDER_SERVICE_URL}/swagger;
+        rewrite ^/docs/orders/swagger(.*)$ /swagger$1 break;
+        proxy_pass $order_backend;
     }
 
     location = /docs/orders/openapi.json {
@@ -501,7 +534,7 @@ server {
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${ORDER_SERVICE_URL}/docs/openapi.json;
+        proxy_pass $order_backend/docs/openapi.json;
     }
 
     location = /docs/orders/openapi.yaml {
@@ -511,7 +544,7 @@ server {
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${ORDER_SERVICE_URL}/docs/openapi.yaml;
+        proxy_pass $order_backend/docs/openapi.yaml;
     }
 
     # User Service Documentation
@@ -522,7 +555,8 @@ server {
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${USER_SERVICE_URL}/docs;
+        rewrite ^ /docs break;
+        proxy_pass $user_backend;
     }
 
     location /docs/users/swagger {
@@ -532,7 +566,8 @@ server {
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${USER_SERVICE_URL}/swagger;
+        rewrite ^/docs/users/swagger(.*)$ /swagger$1 break;
+        proxy_pass $user_backend;
     }
 
     location = /docs/users/openapi.json {
@@ -542,7 +577,7 @@ server {
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${USER_SERVICE_URL}/docs/openapi.json;
+        proxy_pass $user_backend/docs/openapi.json;
     }
 
     location = /docs/users/openapi.yaml {
@@ -552,6 +587,6 @@ server {
         include /etc/nginx/snippets/cors.conf;
         include /etc/nginx/snippets/proxy-params.conf;
 
-        proxy_pass ${USER_SERVICE_URL}/docs/openapi.yaml;
+        proxy_pass $user_backend/docs/openapi.yaml;
     }
 }

@@ -1,0 +1,12 @@
+#!/bin/sh
+# Explain 'Why': Sourced by NGINX docker-entrypoint (.envsh) to dynamically export DNS_RESOLVER
+# from /etc/resolv.conf if not explicitly overridden, ensuring automatic resolution compatibility
+# across Docker (127.0.0.11), Podman (10.89.0.1 or bridge gateway), and Kubernetes without manual configuration.
+
+if [ -z "$DNS_RESOLVER" ] || [ "$DNS_RESOLVER" = "127.0.0.11" ]; then
+    DETECTED_DNS=$(grep -E '^nameserver' /etc/resolv.conf 2>/dev/null | awk '{print $2}' | head -n 1)
+    if [ -n "$DETECTED_DNS" ]; then
+        export DNS_RESOLVER="$DETECTED_DNS"
+        echo "==> [store_gateway] Auto-detected DNS resolver from /etc/resolv.conf: $DNS_RESOLVER"
+    fi
+fi

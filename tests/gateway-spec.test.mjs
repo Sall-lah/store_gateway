@@ -166,46 +166,62 @@ describe('Store Gateway Specification & Feature Verification', () => {
       // Health probe
       assert.match(content, /location\s*=\s*\/health/, 'Must define /health endpoint');
 
+      // Dynamic DNS resolver configuration
+      assert.match(content, /resolver\s+\$\{DNS_RESOLVER\}\s+valid=5s\s+ipv6=off;/, 'Must define runtime resolver with 5s validity and ipv6 disabled');
+      assert.match(content, /resolver_timeout\s+3s;/, 'Must define resolver timeout');
+
       // Dynamic CORS origin mapping
       assert.match(content, /map\s+\$http_origin\s+\$cors_origin/, 'Must define dynamic $cors_origin map');
       assert.match(content, /"~?\$\{CORS_ALLOWED_ORIGIN_REGEX\}"/, 'Must evaluate $cors_origin against CORS_ALLOWED_ORIGIN_REGEX');
 
+      // Upstream variable declarations for dynamic resolution
+      assert.match(content, /set\s+\$auth_backend\s+"?\$\{AUTH_SERVICE_URL\}"?;/, 'Must declare $auth_backend variable');
+      assert.match(content, /set\s+\$product_backend\s+"?\$\{PRODUCT_SERVICE_URL\}"?;/, 'Must declare $product_backend variable');
+      assert.match(content, /set\s+\$order_backend\s+"?\$\{ORDER_SERVICE_URL\}"?;/, 'Must declare $order_backend variable');
+      assert.match(content, /set\s+\$user_backend\s+"?\$\{USER_SERVICE_URL\}"?;/, 'Must declare $user_backend variable');
+
+      // Subrequest verification endpoints
+      assert.match(content, /location\s*=\s*\/_auth_verify\s*\{[\s\S]*?proxy_pass\s+\$auth_backend\/api\/auth\/me;/, 'Must proxy /_auth_verify to $auth_backend');
+      assert.match(content, /location\s*=\s*\/_auth_verify_mutation_only\s*\{[\s\S]*?proxy_pass\s+\$auth_backend\/api\/auth\/me;/, 'Must proxy /_auth_verify_mutation_only to $auth_backend');
+
       // Auth Service routes (v1 standard and aliases)
-      assert.match(content, /location\s+\/api\/auth\/\s*\{[\s\S]*?proxy_pass\s+\$\{AUTH_SERVICE_URL\}\/api\/auth\//, 'Must proxy /api/auth/ to Auth');
-      assert.match(content, /location\s+\/api\/v1\/auth\/\s*\{[\s\S]*?proxy_pass\s+\$\{AUTH_SERVICE_URL\}\/api\/auth\//, 'Must proxy /api/v1/auth/ to Auth');
-      assert.match(content, /location\s*=\s*\/\.well-known\/jwks\.json\s*\{[\s\S]*?proxy_pass\s+\$\{AUTH_SERVICE_URL\}\/\.well-known\/jwks\.json/, 'Must proxy /.well-known/jwks.json');
+      assert.match(content, /location\s+\/api\/auth\/\s*\{[\s\S]*?proxy_pass\s+\$auth_backend\$request_uri;/, 'Must proxy /api/auth/ to Auth');
+      assert.match(content, /location\s*=\s*\/api\/auth\s*\{[\s\S]*?proxy_pass\s+\$auth_backend\/api\/auth;/, 'Must proxy /api/auth to Auth');
+      assert.match(content, /location\s+\/api\/v1\/auth\/\s*\{[\s\S]*?proxy_pass\s+\$auth_backend;/, 'Must proxy /api/v1/auth/ to Auth');
+      assert.match(content, /location\s*=\s*\/api\/v1\/auth\s*\{[\s\S]*?proxy_pass\s+\$auth_backend;/, 'Must proxy /api/v1/auth to Auth');
+      assert.match(content, /location\s*=\s*\/\.well-known\/jwks\.json\s*\{[\s\S]*?proxy_pass\s+\$auth_backend\/\.well-known\/jwks\.json;/, 'Must proxy /.well-known/jwks.json');
 
       // Product Service routes (v1 standard and aliases)
-      assert.match(content, /location\s+(\/api\/products|\/api\/products\/)\s*\{[\s\S]*?proxy_pass\s+\$\{PRODUCT_SERVICE_URL\}\/api\/v1\/products/, 'Must proxy /api/products to Product v1');
-      assert.match(content, /location\s+(\/api\/v1\/products|\/api\/v1\/products\/)\s*\{[\s\S]*?proxy_pass\s+\$\{PRODUCT_SERVICE_URL\}\/api\/v1\/products/, 'Must proxy /api/v1/products to Product v1');
-      assert.match(content, /location\s+(\/api\/admin\/products|\/api\/admin\/products\/)\s*\{[\s\S]*?proxy_pass\s+\$\{PRODUCT_SERVICE_URL\}\/api\/v1\/admin\/products/, 'Must proxy /api/admin/products to Product admin v1');
-      assert.match(content, /location\s+(\/api\/v1\/admin\/products|\/api\/v1\/admin\/products\/)\s*\{[\s\S]*?proxy_pass\s+\$\{PRODUCT_SERVICE_URL\}\/api\/v1\/admin\/products/, 'Must proxy /api/v1/admin/products to Product admin v1');
+      assert.match(content, /location\s+(\/api\/products|\/api\/products\/)\s*\{[\s\S]*?proxy_pass\s+\$product_backend;/, 'Must proxy /api/products alias to Product v1');
+      assert.match(content, /location\s+(\/api\/v1\/products|\/api\/v1\/products\/)\s*\{[\s\S]*?proxy_pass\s+\$product_backend/, 'Must proxy /api/v1/products to Product v1');
+      assert.match(content, /location\s+(\/api\/admin\/products|\/api\/admin\/products\/)\s*\{[\s\S]*?proxy_pass\s+\$product_backend;/, 'Must proxy /api/admin/products alias to Product admin v1');
+      assert.match(content, /location\s+(\/api\/v1\/admin\/products|\/api\/v1\/admin\/products\/)\s*\{[\s\S]*?proxy_pass\s+\$product_backend/, 'Must proxy /api/v1/admin/products to Product admin v1');
 
       // Order Service routes (v1 standard and aliases)
-      assert.match(content, /location\s+(\/api\/orders|\/api\/orders\/)\s*\{[\s\S]*?proxy_pass\s+\$\{ORDER_SERVICE_URL\}\/api\/v1\/orders/, 'Must proxy /api/orders to Order v1');
-      assert.match(content, /location\s+(\/api\/v1\/orders|\/api\/v1\/orders\/)\s*\{[\s\S]*?proxy_pass\s+\$\{ORDER_SERVICE_URL\}\/api\/v1\/orders/, 'Must proxy /api/v1/orders to Order v1');
+      assert.match(content, /location\s+(\/api\/orders|\/api\/orders\/)\s*\{[\s\S]*?proxy_pass\s+\$order_backend;/, 'Must proxy /api/orders alias to Order v1');
+      assert.match(content, /location\s+(\/api\/v1\/orders|\/api\/v1\/orders\/)\s*\{[\s\S]*?proxy_pass\s+\$order_backend/, 'Must proxy /api/v1/orders to Order v1');
 
       // User Service routes (v1 standard and aliases)
-      assert.match(content, /location\s+(\/api\/users|\/api\/users\/)\s*\{[\s\S]*?proxy_pass\s+\$\{USER_SERVICE_URL\}\/api\/users/, 'Must proxy /api/users to User service');
-      assert.match(content, /location\s+(\/api\/v1\/users|\/api\/v1\/users\/)\s*\{[\s\S]*?proxy_pass\s+\$\{USER_SERVICE_URL\}\/api\/users/, 'Must proxy /api/v1/users to User service');
+      assert.match(content, /location\s+(\/api\/users|\/api\/users\/)\s*\{[\s\S]*?proxy_pass\s+\$user_backend/, 'Must proxy /api/users to User service');
+      assert.match(content, /location\s+(\/api\/v1\/users|\/api\/v1\/users\/)\s*\{[\s\S]*?proxy_pass\s+\$user_backend/, 'Must proxy /api/v1/users to User service');
 
       // Documentation routes & toggle
       assert.match(content, /map\s+"?\$\{ENABLE_DOCS\}"?\s+\$docs_disabled/, 'Must map ENABLE_DOCS to docs_disabled');
       assert.match(content, /location\s*=\s*\/docs\b/, 'Must provide /docs landing index');
-      assert.match(content, /location\s+\/docs\/auth\/\s*\{[\s\S]*?proxy_pass\s+\$\{AUTH_SERVICE_URL\}\/docs\//, 'Must proxy /docs/auth/ to Auth Swagger');
-      assert.match(content, /location\s*=\s*\/docs\/auth\/openapi\.yaml\s*\{[\s\S]*?proxy_pass\s+\$\{AUTH_SERVICE_URL\}\/docs\/openapi\.yaml/, 'Must proxy /docs/auth/openapi.yaml');
-      assert.match(content, /location\s+\/docs\/products\/scalar\/\s*\{[\s\S]*?proxy_pass\s+\$\{PRODUCT_SERVICE_URL\}\/docs\//, 'Must proxy /docs/products/scalar/ to Product Scalar UI');
-      assert.match(content, /location\s+\/docs\/products\/swagger\/\s*\{[\s\S]*?proxy_pass\s+\$\{PRODUCT_SERVICE_URL\}\/swagger\//, 'Must proxy /docs/products/swagger/ to Product Swagger UI');
-      assert.match(content, /location\s*=\s*\/docs\/products\/openapi\.json\s*\{[\s\S]*?proxy_pass\s+\$\{PRODUCT_SERVICE_URL\}\/openapi\.json/, 'Must proxy /docs/products/openapi.json');
-      assert.match(content, /location\s*=\s*\/docs\/products\/openapi\.yaml\s*\{[\s\S]*?proxy_pass\s+\$\{PRODUCT_SERVICE_URL\}\/openapi\.yaml/, 'Must proxy /docs/products/openapi.yaml');
-      assert.match(content, /location\s+\/docs\/orders\/scalar\s*\{[\s\S]*?proxy_pass\s+\$\{ORDER_SERVICE_URL\}\/docs/, 'Must proxy /docs/orders/scalar to Order Scalar UI');
-      assert.match(content, /location\s+\/docs\/orders\/swagger\s*\{[\s\S]*?proxy_pass\s+\$\{ORDER_SERVICE_URL\}\/swagger/, 'Must proxy /docs/orders/swagger to Order Swagger UI');
-      assert.match(content, /location\s*=\s*\/docs\/orders\/openapi\.json\s*\{[\s\S]*?proxy_pass\s+\$\{ORDER_SERVICE_URL\}\/docs\/openapi\.json/, 'Must proxy /docs/orders/openapi.json');
-      assert.match(content, /location\s*=\s*\/docs\/orders\/openapi\.yaml\s*\{[\s\S]*?proxy_pass\s+\$\{ORDER_SERVICE_URL\}\/docs\/openapi\.yaml/, 'Must proxy /docs/orders/openapi.yaml');
-      assert.match(content, /location\s*=\s*\/docs\/users\s*\{[\s\S]*?proxy_pass\s+\$\{USER_SERVICE_URL\}\/docs/, 'Must proxy /docs/users to User Docs');
-      assert.match(content, /location\s+\/docs\/users\/swagger\s*\{[\s\S]*?proxy_pass\s+\$\{USER_SERVICE_URL\}\/swagger/, 'Must proxy /docs/users/swagger to User Swagger UI');
-      assert.match(content, /location\s*=\s*\/docs\/users\/openapi\.json\s*\{[\s\S]*?proxy_pass\s+\$\{USER_SERVICE_URL\}\/docs\/openapi\.json/, 'Must proxy /docs/users/openapi.json');
-      assert.match(content, /location\s*=\s*\/docs\/users\/openapi\.yaml\s*\{[\s\S]*?proxy_pass\s+\$\{USER_SERVICE_URL\}\/docs\/openapi\.yaml/, 'Must proxy /docs/users/openapi.yaml');
+      assert.match(content, /location\s+\/docs\/auth\/\s*\{[\s\S]*?proxy_pass\s+\$auth_backend;/, 'Must proxy /docs/auth/ to Auth Swagger');
+      assert.match(content, /location\s*=\s*\/docs\/auth\/openapi\.yaml\s*\{[\s\S]*?proxy_pass\s+\$auth_backend\/docs\/openapi\.yaml;/, 'Must proxy /docs/auth/openapi.yaml');
+      assert.match(content, /location\s+\/docs\/products\/scalar\/\s*\{[\s\S]*?proxy_pass\s+\$product_backend;/, 'Must proxy /docs/products/scalar/ to Product Scalar UI');
+      assert.match(content, /location\s+\/docs\/products\/swagger\/\s*\{[\s\S]*?proxy_pass\s+\$product_backend;/, 'Must proxy /docs/products/swagger/ to Product Swagger UI');
+      assert.match(content, /location\s*=\s*\/docs\/products\/openapi\.json\s*\{[\s\S]*?proxy_pass\s+\$product_backend\/openapi\.json;/, 'Must proxy /docs/products/openapi.json');
+      assert.match(content, /location\s*=\s*\/docs\/products\/openapi\.yaml\s*\{[\s\S]*?proxy_pass\s+\$product_backend\/openapi\.yaml;/, 'Must proxy /docs/products/openapi.yaml');
+      assert.match(content, /location\s+\/docs\/orders\/scalar\s*\{[\s\S]*?proxy_pass\s+\$order_backend;/, 'Must proxy /docs/orders/scalar to Order Scalar UI');
+      assert.match(content, /location\s+\/docs\/orders\/swagger\s*\{[\s\S]*?proxy_pass\s+\$order_backend;/, 'Must proxy /docs/orders/swagger to Order Swagger UI');
+      assert.match(content, /location\s*=\s*\/docs\/orders\/openapi\.json\s*\{[\s\S]*?proxy_pass\s+\$order_backend\/docs\/openapi\.json;/, 'Must proxy /docs/orders/openapi.json');
+      assert.match(content, /location\s*=\s*\/docs\/orders\/openapi\.yaml\s*\{[\s\S]*?proxy_pass\s+\$order_backend\/docs\/openapi\.yaml;/, 'Must proxy /docs/orders/openapi.yaml');
+      assert.match(content, /location\s*=\s*\/docs\/users\s*\{[\s\S]*?proxy_pass\s+\$user_backend;/, 'Must proxy /docs/users to User Docs');
+      assert.match(content, /location\s+\/docs\/users\/swagger\s*\{[\s\S]*?proxy_pass\s+\$user_backend;/, 'Must proxy /docs/users/swagger to User Swagger UI');
+      assert.match(content, /location\s*=\s*\/docs\/users\/openapi\.json\s*\{[\s\S]*?proxy_pass\s+\$user_backend\/docs\/openapi\.json;/, 'Must proxy /docs/users/openapi.json');
+      assert.match(content, /location\s*=\s*\/docs\/users\/openapi\.yaml\s*\{[\s\S]*?proxy_pass\s+\$user_backend\/docs\/openapi\.yaml;/, 'Must proxy /docs/users/openapi.yaml');
 
       // Documentation relies on upstream relative path resolution without gateway sub_filters
       assert.ok(!content.includes('sub_filter'), 'Must not contain sub_filter directives in clean relative proxy mode');
@@ -218,6 +234,7 @@ describe('Store Gateway Specification & Feature Verification', () => {
       const rendered = template
         .replaceAll('${GATEWAY_PORT}', '80')
         .replaceAll('${ENABLE_DOCS}', 'true')
+        .replaceAll('${DNS_RESOLVER}', '127.0.0.11')
         .replaceAll('${CORS_ALLOWED_ORIGIN_REGEX}', '^https?://(localhost|127\\.0\\.0\\.1)(:[0-9]+)?$')
         .replaceAll('${AUTH_SERVICE_URL}', 'http://auth-service:8080')
         .replaceAll('${PRODUCT_SERVICE_URL}', 'http://product-service:8040')
@@ -226,18 +243,48 @@ describe('Store Gateway Specification & Feature Verification', () => {
 
       assert.ok(!rendered.includes('${GATEWAY_PORT}'), 'GATEWAY_PORT variable should be replaced');
       assert.ok(!rendered.includes('${ENABLE_DOCS}'), 'ENABLE_DOCS variable should be replaced');
+      assert.ok(!rendered.includes('${DNS_RESOLVER}'), 'DNS_RESOLVER variable should be replaced');
       assert.ok(!rendered.includes('${CORS_ALLOWED_ORIGIN_REGEX}'), 'CORS_ALLOWED_ORIGIN_REGEX variable should be replaced');
       assert.ok(!rendered.includes('${AUTH_SERVICE_URL}'), 'AUTH_SERVICE_URL variable should be replaced');
       assert.ok(!rendered.includes('${PRODUCT_SERVICE_URL}'), 'PRODUCT_SERVICE_URL variable should be replaced');
       assert.ok(!rendered.includes('${ORDER_SERVICE_URL}'), 'ORDER_SERVICE_URL variable should be replaced');
       assert.ok(!rendered.includes('${USER_SERVICE_URL}'), 'USER_SERVICE_URL variable should be replaced');
       assert.ok(rendered.includes('listen 80 default_server;'), 'Must render listen 80');
+      assert.ok(rendered.includes('resolver 127.0.0.11 valid=5s ipv6=off;'), 'Must render resolver directive');
+      assert.ok(rendered.includes('resolver_timeout 3s;'), 'Must render resolver timeout');
+      assert.ok(rendered.includes('set $auth_backend "http://auth-service:8080";'), 'Must render auth backend variable');
+      assert.ok(rendered.includes('set $product_backend "http://product-service:8040";'), 'Must render product backend variable');
+      assert.ok(rendered.includes('set $order_backend "http://order-service:8060";'), 'Must render order backend variable');
+      assert.ok(rendered.includes('set $user_backend "http://user-service:8082";'), 'Must render user backend variable');
       assert.ok(rendered.includes('"~^https?://(localhost|127\\.0\\.0\\.1)(:[0-9]+)?$" "$http_origin";'), 'Must render dynamic cors map');
-      assert.ok(rendered.includes('http://auth-service:8080/api/auth/'), 'Must render auth upstream');
-      assert.ok(rendered.includes('http://product-service:8040/api/v1/products'), 'Must render product upstream');
-      assert.ok(rendered.includes('http://product-service:8040/api/v1/admin/products'), 'Must render admin product upstream');
-      assert.ok(rendered.includes('http://order-service:8060/api/v1/orders'), 'Must render order upstream');
-      assert.ok(rendered.includes('http://user-service:8082/api/users'), 'Must render user upstream');
+      assert.ok(rendered.includes('proxy_pass $auth_backend$request_uri;'), 'Must render auth proxy pass');
+      assert.ok(rendered.includes('proxy_pass $product_backend$request_uri;'), 'Must render product proxy pass');
+      assert.ok(rendered.includes('proxy_pass $order_backend$request_uri;'), 'Must render order proxy pass');
+      assert.ok(rendered.includes('proxy_pass $user_backend$request_uri;'), 'Must render user proxy pass');
+    });
+
+    test('validates path rewrite rules and URI preservation across all proxy targets', () => {
+      const content = readProjectFile('nginx/templates/default.conf.template');
+
+      // Unversioned/legacy alias rewrites
+      assert.match(content, /rewrite\s+\^\/api\/v1\/auth\/\(\.\*\)\$\s+\/api\/auth\/\$1\s+break;/, 'Must rewrite /api/v1/auth/* to /api/auth/*');
+      assert.match(content, /rewrite\s+\^\/api\/products\/\(\.\*\)\$\s+\/api\/v1\/products\/\$1\s+break;/, 'Must rewrite /api/products/* to /api/v1/products/*');
+      assert.match(content, /rewrite\s+\^\/api\/admin\/products\/\(\.\*\)\$\s+\/api\/v1\/admin\/products\/\$1\s+break;/, 'Must rewrite /api/admin/products/* to /api/v1/admin/products/*');
+      assert.match(content, /rewrite\s+\^\/api\/orders\/\(\.\*\)\$\s+\/api\/v1\/orders\/\$1\s+break;/, 'Must rewrite /api/orders/* to /api/v1/orders/*');
+      assert.match(content, /rewrite\s+\^\/api\/admin\/orders\/\(\.\*\)\$\s+\/api\/v1\/admin\/orders\/\$1\s+break;/, 'Must rewrite /api/admin/orders/* to /api/v1/admin/orders/*');
+      assert.match(content, /rewrite\s+\^\/api\/dev\/orders\/\(\.\*\)\$\s+\/api\/v1\/dev\/orders\/\$1\s+break;/, 'Must rewrite /api/dev/orders/* to /api/v1/dev/orders/*');
+      assert.match(content, /rewrite\s+\^\/api\/orders\/webhook\/\(\.\*\)\$\s+\/api\/v1\/orders\/webhook\/\$1\s+break;/, 'Must rewrite /api/orders/webhook/* to /api/v1/orders/webhook/*');
+      assert.match(content, /rewrite\s+\^\/api\/v1\/users\/\(\.\*\)\$\s+\/api\/users\/\$1\s+break;/, 'Must rewrite /api/v1/users/* to /api/users/*');
+
+      // Canonical 1:1 pass-through using $request_uri for argument and path preservation
+      assert.match(content, /location\s+\/api\/auth\/\s*\{[\s\S]*?proxy_pass\s+\$auth_backend\$request_uri;/, 'Must forward full $request_uri to /api/auth/');
+      assert.match(content, /location\s+\/api\/v1\/products\/\s*\{[\s\S]*?proxy_pass\s+\$product_backend\$request_uri;/, 'Must forward full $request_uri to /api/v1/products/');
+      assert.match(content, /location\s+\/api\/v1\/admin\/products\/\s*\{[\s\S]*?proxy_pass\s+\$product_backend\$request_uri;/, 'Must forward full $request_uri to /api/v1/admin/products/');
+      assert.match(content, /location\s+\/api\/v1\/orders\/\s*\{[\s\S]*?proxy_pass\s+\$order_backend\$request_uri;/, 'Must forward full $request_uri to /api/v1/orders/');
+      assert.match(content, /location\s+\/api\/v1\/admin\/orders\/\s*\{[\s\S]*?proxy_pass\s+\$order_backend\$request_uri;/, 'Must forward full $request_uri to /api/v1/admin/orders/');
+      assert.match(content, /location\s+\/api\/v1\/dev\/orders\/\s*\{[\s\S]*?proxy_pass\s+\$order_backend\$request_uri;/, 'Must forward full $request_uri to /api/v1/dev/orders/');
+      assert.match(content, /location\s+\/api\/v1\/orders\/webhook\/\s*\{[\s\S]*?proxy_pass\s+\$order_backend\$request_uri;/, 'Must forward full $request_uri to /api/v1/orders/webhook/');
+      assert.match(content, /location\s+\/api\/users\/\s*\{[\s\S]*?proxy_pass\s+\$user_backend\$request_uri;/, 'Must forward full $request_uri to /api/users/');
     });
   });
 
@@ -246,7 +293,9 @@ describe('Store Gateway Specification & Feature Verification', () => {
       const dockerfile = readProjectFile('Dockerfile');
       assert.match(dockerfile, /NGINX_ENVSUBST_FILTER=".*CORS_ALLOWED_ORIGIN_REGEX.*"/, 'Must define filter for envsubst including CORS_ALLOWED_ORIGIN_REGEX');
       assert.match(dockerfile, /NGINX_ENVSUBST_FILTER=".*USER_SERVICE_URL.*"/, 'Must define filter for envsubst including USER_SERVICE_URL');
+      assert.match(dockerfile, /NGINX_ENVSUBST_FILTER=".*DNS_RESOLVER.*"/, 'Must define filter for envsubst including DNS_RESOLVER');
       assert.match(dockerfile, /ENABLE_DOCS=true/, 'Dockerfile must set default ENABLE_DOCS=true');
+      assert.match(dockerfile, /DNS_RESOLVER=127\.0\.0\.11/, 'Dockerfile must set default DNS_RESOLVER=127.0.0.11');
       assert.match(dockerfile, /CORS_ALLOWED_ORIGIN_REGEX=/, 'Dockerfile must set default CORS_ALLOWED_ORIGIN_REGEX');
       assert.match(dockerfile, /ORDER_SERVICE_URL=http:\/\/order-service:8060/, 'Dockerfile must set default ORDER_SERVICE_URL');
       assert.match(dockerfile, /USER_SERVICE_URL=http:\/\/user-service:8082/, 'Dockerfile must set default USER_SERVICE_URL');
@@ -278,6 +327,7 @@ describe('Store Gateway Specification & Feature Verification', () => {
       assert.match(envExample, /PRODUCT_SERVICE_URL=/, 'Must specify PRODUCT_SERVICE_URL');
       assert.match(envExample, /ORDER_SERVICE_URL=/, 'Must specify ORDER_SERVICE_URL');
       assert.match(envExample, /USER_SERVICE_URL=/, 'Must specify USER_SERVICE_URL');
+      assert.match(envExample, /DNS_RESOLVER=/, 'Must specify DNS_RESOLVER');
       assert.match(envExample, /GATEWAY_PORT=/, 'Must specify GATEWAY_PORT');
       assert.match(envExample, /CORS_ALLOWED_ORIGIN_REGEX=/, 'Must specify CORS_ALLOWED_ORIGIN_REGEX');
       assert.match(envExample, /CLOUDFLARE_TUNNEL_TOKEN=/, 'Must document CLOUDFLARE_TUNNEL_TOKEN');

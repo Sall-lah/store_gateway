@@ -13,9 +13,10 @@ RUN apk add --no-cache ca-certificates
 COPY --from=cloudflared-bin /usr/local/bin/cloudflared /usr/local/bin/cloudflared
 
 # Explain 'Why': NGINX_ENVSUBST_FILTER restricts envsubst to specific variables, preventing corruption of internal NGINX variables ($host, $req_id, etc.).
-ENV NGINX_ENVSUBST_FILTER="GATEWAY_PORT|AUTH_SERVICE_URL|PRODUCT_SERVICE_URL|ORDER_SERVICE_URL|USER_SERVICE_URL|ENABLE_DOCS|CORS_ALLOWED_ORIGIN_REGEX" \
+ENV NGINX_ENVSUBST_FILTER="GATEWAY_PORT|AUTH_SERVICE_URL|PRODUCT_SERVICE_URL|ORDER_SERVICE_URL|USER_SERVICE_URL|ENABLE_DOCS|CORS_ALLOWED_ORIGIN_REGEX|DNS_RESOLVER" \
     GATEWAY_PORT=80 \
     ENABLE_DOCS=true \
+    DNS_RESOLVER=127.0.0.11 \
     CORS_ALLOWED_ORIGIN_REGEX="^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$" \
     AUTH_SERVICE_URL=http://auth-service:8080 \
     PRODUCT_SERVICE_URL=http://product-service:8040 \
@@ -28,6 +29,10 @@ RUN rm -rf /etc/nginx/conf.d/* /etc/nginx/templates/*
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
 COPY nginx/snippets/ /etc/nginx/snippets/
 COPY nginx/templates/ /etc/nginx/templates/
+
+# Explain 'Why': Sourced entrypoint script auto-detects nameserver from /etc/resolv.conf for seamless DNS resolution across Docker and Podman.
+COPY scripts/15-detect-resolver.envsh /docker-entrypoint.d/15-detect-resolver.envsh
+RUN chmod +x /docker-entrypoint.d/15-detect-resolver.envsh
 
 # Explain 'Why': Add entrypoint script to automatically launch cloudflared during container initialization.
 COPY scripts/40-start-cloudflared.sh /docker-entrypoint.d/40-start-cloudflared.sh
