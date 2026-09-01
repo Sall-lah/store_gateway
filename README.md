@@ -1,62 +1,65 @@
-# Store Gateway (NGINX API Gateway)
+# Store Gateway (`store_gateway`)
 
-`store_gateway` is the single entry point and high-performance reverse proxy for the microservice ecosystem (Auth Service, Product Service, Order Service, and User Service). It centralizes perimeter authentication offloading, anti-spoofing header sanitization, centralized CORS preflight caching, unified documentation proxying, and distributed request tracing.
+[![NGINX Version](https://img.shields.io/badge/NGINX-1.25+-009639?style=flat&logo=nginx)](https://nginx.org/)
+[![Base Image](https://img.shields.io/badge/Base%20Image-Alpine%20Linux-0D597F?logo=alpinelinux)](https://alpinelinux.org/)
+[![Container](https://img.shields.io/badge/Container-Docker%20%7C%20Podman-2496ED?logo=docker)](https://www.docker.com/)
+[![Tunnel](https://img.shields.io/badge/Tunnel-Cloudflare%20Zero%20Trust-F38020?logo=cloudflare)](https://www.cloudflare.com/)
+[![Testing](https://img.shields.io/badge/Testing-Jest%20%2F%20Node.js-C21325?logo=jest)](https://jestjs.io/)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
----
-
-## 🏛️ Architecture Overview
-
-```
-                                  CLIENTS
-                       (Web Frontend, Mobile, Curl, Postman)
-                                     │
-                                     │ HTTP (Port 80 / $GATEWAY_PORT)
-                                     ▼
-                    ┌─────────────────────────────────┐
-                    │       STORE_GATEWAY (NGINX)      │
-                    ├─────────────────────────────────┤
-                    │ • Centralized CORS (OPTIONS 204)│
-                    │ • Anti-Spoofing (Strip X-User-* │
-                    │ • Auth Offload Subrequests      │
-                    │ • JWKS Pass-Through Routing     │
-                    │ • Distributed Trace ID Injection│
-                    │ • Unified Documentation Proxy   │
-                    └───────┬─────────┬─────────┬─────┴─────────┐
-                            │         │         │               │
-    /api[/v1]/auth/*        │         │         │               │  /api[/v1]/users/*
-    /docs/auth/*            │         │         │               │  /docs/users/*
-    /.well-known/*          │         │         │               │
-                            ▼         │         ▼               ▼
-             ┌─────────────────────┐  │  ┌─────────────────────┐┌─────────────────────┐
-             │    AUTH SERVICE     │  │  │    ORDER SERVICE    ││    USER SERVICE     │
-             │ (auth-service:8080) │  │  │ (order-service:8060) ││ (user-service:8082) │
-             ├─────────────────────┤  │  ├─────────────────────┤├─────────────────────┤
-             │ • RS256 JWKS Key    │  │  │ • Order Management  ││ • User Profiles     │
-             │   Distribution      │  │  │ • Offloaded Auth    ││ • Account Lifecycle │
-             │ • Login / Register  │  │  │ • Scalar & Swagger  ││ • Notifications Feed│
-             │ • Swagger UI        │  │  │ • OpenAPI Specs     ││ • Notification Prefs│
-             └─────────────────────┘  │  └─────────────────────┘│ • Swagger & OpenAPI  │
-                                      │                         └─────────────────────┘
-                                      │  /api[/v1]/products/*
-                                      │  /api[/v1]/admin/products/*
-                                      │  /docs/products/*
-                                      ▼
-                        ┌─────────────────────┐
-                        │   PRODUCT SERVICE   │
-                        │(product-service:8040│
-                        ├─────────────────────┤
-                        │ • Product Catalog   │
-                        │ • Admin Products    │
-                        │ • Offloaded Auth    │
-                        │ • Scalar & Swagger  │
-                        └─────────────────────┘
-```
+A production-grade, high-performance API Gateway and Perimeter Reverse Proxy built on NGINX and Alpine Linux. It serves as the single unified entry point for the microservice ecosystem, orchestrating perimeter authentication offloading, anti-spoofing header sanitization, centralized CORS preflight caching, unified documentation proxying, distributed request tracing, and secure public ingress via embedded Cloudflare Zero Trust Tunnels.
 
 ---
 
-## 🔄 Architectural Sequence Diagrams
+## 📑 Table of Contents
 
-### 1. Perimeter Authentication Offloading Flow
+- [Architecture Overview](#-architecture-overview)
+  - [System Topology](#system-topology)
+  - [Architectural Sequence Diagrams](#architectural-sequence-diagrams)
+- [Key Features](#-key-features)
+- [Technology Stack](#-technology-stack)
+- [Repository Structure](#-repository-structure)
+- [Prerequisites & Environment Configuration](#-prerequisites--environment-configuration)
+- [Route & Documentation Mapping Specification](#-route--documentation-mapping-specification)
+- [Core Architectural Domains](#-core-architectural-domains)
+- [Getting Started (Standalone Deployment)](#-getting-started-standalone-deployment)
+- [Standalone Podman Deployment Guide](#-standalone-podman-deployment-guide)
+- [Host Edge NGINX Reverse-Proxy Configuration](#-host-edge-nginx-reverse-proxy-configuration)
+- [Cloudflare Tunnel Deployment & DNS CNAME Setup](#-cloudflare-tunnel-deployment--dns-cname-setup)
+- [Local Testing & Verification](#-local-testing--verification)
+- [Ecosystem Repositories](#-ecosystem-repositories)
+
+---
+
+## 🏗 Architecture Overview
+
+### System Topology
+
+```mermaid
+flowchart TD
+    Client[Clients: Web Frontend, Mobile, Curl, Postman] -->|HTTP / HTTPS| Gateway[Store Gateway: NGINX / Alpine]
+    
+    subgraph store_gateway ["Store Gateway Perimeter"]
+        Gateway --> CORS[Centralized CORS: OPTIONS 204]
+        Gateway --> AntiSpoof[Anti-Spoofing: Strip X-User-*]
+        Gateway --> AuthOffload[Auth Offload Subrequest: /_auth_verify]
+        Gateway --> SecHeaders[Security Headers & Trace ID]
+        Gateway --> DocsProxy[Unified Documentation Hub: /docs]
+    end
+
+    AuthOffload -->|GET /api/auth/me| AuthSvc[Auth Service: port 8080]
+    Gateway -->|Forward with Verified X-User-*| AuthSvc
+    Gateway -->|Forward with Verified X-User-*| ProductSvc[Product Service: port 8040]
+    Gateway -->|Forward with Verified X-User-*| OrderSvc[Order Service: port 8060]
+    Gateway -->|Forward with Verified X-User-*| UserSvc[User Service: port 8082]
+    
+    CloudflareEdge[Cloudflare Edge Network] -->|Encrypted Zero Trust Tunnel| CFTunnel[cloudflared daemon]
+    CFTunnel --> Gateway
+```
+
+### Architectural Sequence Diagrams
+
+#### 1. Perimeter Authentication Offloading Flow
 
 ```mermaid
 sequenceDiagram
@@ -82,7 +85,7 @@ sequenceDiagram
     end
 ```
 
-### 2. Centralized CORS Preflight Flow
+#### 2. Centralized CORS Preflight Flow
 
 ```mermaid
 sequenceDiagram
@@ -104,10 +107,89 @@ sequenceDiagram
 
 ---
 
+## 🌟 Key Features
+
+1. **Perimeter Authentication Offloading**: Validates JWT credentials and bearer tokens against the Auth Service via internal NGINX subrequests before routing requests downstream.
+2. **Anti-Spoofing Header Sanitization**: Strips untrusted incoming `X-User-*` client headers to ensure callers cannot spoof identity or escalate privileges.
+3. **Centralized CORS Management**: Intercepts `OPTIONS` preflight requests, dynamically evaluates allowed origin regex, caches preflight for 24 hours, and suppresses duplicate upstream headers.
+4. **Unified Documentation Proxying**: Serves an embedded API Documentation Hub (`/docs`) and dynamically proxies Scalar UI, Swagger UI, and OpenAPI schemas for all microservices.
+5. **Distributed Request Tracing**: Injects unique UUID `$req_id` into downstream requests, upstream logs, and client response headers (`X-Request-ID`).
+6. **Embedded Cloudflare Zero Trust Tunnel**: Integrated `cloudflared` client automatically exposes local and private VPC gateway instances to Cloudflare Edge without opening firewall ports.
+
+---
+
+## 🛠 Technology Stack
+
+- **Reverse Proxy & Web Server**: [NGINX 1.25+](https://nginx.org/) on Alpine Linux
+- **Edge Ingress & Tunneling**: [Cloudflare Zero Trust (`cloudflared`)](https://github.com/cloudflare/cloudflared)
+- **Containerization**: Multi-stage [Docker](https://www.docker.com/) and rootless [Podman](https://podman.io/)
+- **Configuration Templating**: `envsubst` / NGINX `docker-entrypoint.d` lifecycle hooks
+- **Test Automation**: Node.js ESM test runner (`node:test`) & Mock Upstream Suite
+- **API Documentation**: Scalar UI, Swagger UI, and OpenAPI 3.x specifications
+
+---
+
+## 📁 Repository Structure
+
+```
+store_gateway/
+├── Dockerfile                           # Multi-stage Alpine NGINX + cloudflared container build
+├── .env.example                         # Environment configuration template
+├── .gitignore                           # Git ignore definitions (protects .env and .agent)
+├── .dockerignore                        # Docker build context exclusions
+├── package.json                         # Node.js test scripts and module definitions
+├── scripts/
+│   └── 40-start-cloudflared.sh          # Container startup hook for Cloudflare Tunnel
+├── nginx/
+│   ├── nginx.conf                       # Main NGINX context with trace ID mapping & logging
+│   ├── templates/
+│   │   └── default.conf.template        # Dynamic virtual host envsubst template
+│   └── snippets/
+│       ├── cors.conf                    # Centralized CORS & OPTIONS 204 preflight handler
+│       ├── anti-spoofing.conf           # Anti-spoofing sanitization (strips client X-User-*)
+│       ├── auth-offload.conf            # Full perimeter auth offloading & claim injection
+│       ├── auth-offload-mutation.conf   # Mutation-only auth offloading for public read routes
+│       ├── proxy-params.conf            # Reverse proxy headers, connection reuse & trace ID
+│       └── security-headers.conf        # Defense-in-depth security response headers
+├── tests/
+│   ├── auth-flow.test.mjs               # E2E authentication offload and anti-spoofing tests
+│   └── gateway-spec.test.mjs            # NGINX configuration and route contract tests
+└── README.md                            # Comprehensive documentation & developer guide
+```
+
+---
+
+## ⚙️ Prerequisites & Environment Configuration
+
+### Prerequisites
+- **Docker**: Version 20.10+ (or **Podman** 4.0+)
+- **Node.js**: Version 18.x+ (for running automated test suite)
+- **Cloudflare Zero Trust Account**: (Optional, for public edge tunneling)
+
+### Configuration Options (`.env`)
+
+Copy the example configuration file:
+```bash
+cp .env.example .env
+```
+
+| Variable Name | Type | Required | Default | Description | Example |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `GATEWAY_PORT` | `int` | Optional | `80` | Port on which NGINX listens for incoming client requests | `80` or `8000` |
+| `ENABLE_DOCS` | `bool` | Optional | `true` | Toggles documentation endpoints (`/docs*`). Set `false` in hardened production | `true` or `false` |
+| `CORS_ALLOWED_ORIGIN_REGEX` | `string` | Optional | `^https?://(localhost\|127\.0\.0\.1)(:[0-9]+)?$` | Regex matching allowed client `Origin` headers for CORS reflection and credentials | `^https?://(localhost\|127\.0\.0\.1\|yourdomain\.com)(:[0-9]+)?$` |
+| `AUTH_SERVICE_URL` | `string` | **Required** | *None* | Base HTTP URL of upstream Auth Service | `http://auth-service:8080` |
+| `PRODUCT_SERVICE_URL` | `string` | **Required** | *None* | Base HTTP URL of upstream Product Service | `http://product-service:8040` |
+| `ORDER_SERVICE_URL` | `string` | **Required** | *None* | Base HTTP URL of upstream Order Service | `http://order-service:8060` |
+| `USER_SERVICE_URL` | `string` | **Required** | *None* | Base HTTP URL of upstream User Service | `http://user-service:8082` |
+| `CLOUDFLARE_TUNNEL_TOKEN` | `string` | Optional | *None* | Base64 token for embedded Cloudflare Zero Trust Tunnel | `eyJhIjoi...` |
+
+---
+
 ## 🗺️ Route & Documentation Mapping Specification
 
 | Gateway Route | Methods | Upstream Target | Auth Policy | Description |
-|---|---|---|---|---|
+| :--- | :--- | :--- | :--- | :--- |
 | `GET /health` | `GET` | *Gateway Internal* | Public | Healthcheck probe returning `200 UP` (access log disabled) |
 | `ALL /api/v1/auth/*` (or `/api/auth/*`) | `ANY` | `${AUTH_SERVICE_URL}/api/auth/*` | Public / Self-enforced | Login, register, token refresh cookies, user profile |
 | `GET /.well-known/jwks.json` | `GET, OPTIONS` | `${AUTH_SERVICE_URL}/.well-known/jwks.json` | Public | RS256 JWKS public key set for token verification |
@@ -165,22 +247,7 @@ sequenceDiagram
 
 ---
 
-## ⚙️ Environment Variables Reference
-
-| Variable Name | Required | Default | Description | Example |
-|---|---|---|---|---|
-| `GATEWAY_PORT` | Optional | `80` | Port on which NGINX listens for incoming client requests | `80` or `8000` |
-| `ENABLE_DOCS` | Optional | `true` | Toggles documentation endpoints (`/docs*`). Set to `false`, `0`, or `off` to disable | `true` or `false` |
-| `CORS_ALLOWED_ORIGIN_REGEX` | Optional | `^https?://(localhost\|127\.0\.0\.1)(:[0-9]+)?$` | Regular expression matching allowed client `Origin` headers for CORS reflection and credential support | `^https?://(localhost\|127\.0\.0\.1\|yourdomain\.com)(:[0-9]+)?$` |
-| `AUTH_SERVICE_URL` | **Required** | *None* | Base HTTP URL of the upstream Auth Service | `http://localhost:8080` or `http://auth-service:8080` |
-| `PRODUCT_SERVICE_URL` | **Required** | *None* | Base HTTP URL of the upstream Product Service | `http://localhost:8040` or `http://product-service:8040` |
-| `ORDER_SERVICE_URL` | **Required** | *None* | Base HTTP URL of the upstream Order Service | `http://localhost:8060` or `http://order-service:8060` |
-| `USER_SERVICE_URL` | **Required** | *None* | Base HTTP URL of the upstream User Service | `http://localhost:8082` or `http://user-service:8082` |
-| `CLOUDFLARE_TUNNEL_TOKEN` | Optional | *None* | Authentication token for embedded Cloudflare Tunnel (`cloudflared`). When supplied, starts an outbound tunnel to Cloudflare Edge | `eyJhIjoi...` |
-
----
-
-## 🚀 Quick Start (Standalone Deployment)
+## 🚀 Getting Started (Standalone Deployment)
 
 ### 1. Copy Environment Configuration
 ```bash
@@ -471,7 +538,7 @@ docker run -d \
   store_gateway
 ```
 
-**Using Podman (on existing `store-network`):**
+**Using Podman (on existing `store_net`):**
 ```bash
 # Build the image
 podman build -t store_gateway .
@@ -479,7 +546,7 @@ podman build -t store_gateway .
 # Run on the store network alongside microservices
 podman run -d \
   --name store_gateway \
-  --network store-network \
+  --network store_net \
   --restart unless-stopped \
   -p 80:80 \
   -p 8000:80 \
@@ -565,31 +632,25 @@ curl -i http://localhost/docs/users/openapi.yaml
 
 ---
 
-## 📁 File Structure
+## 🌐 Ecosystem Repositories
 
-```
-store_gateway/
-├── Dockerfile                           # Lean Alpine-based NGINX + cloudflared container image
-├── .env.example                         # Environment variable template
-├── .gitignore                           # Git ignore rules (protects .env and .agent)
-├── .dockerignore                        # Docker build ignore rules
-├── scripts/
-│   └── 40-start-cloudflared.sh          # Container startup hook for Cloudflare Tunnel
-├── nginx/
-│   ├── nginx.conf                       # Main NGINX context with trace ID mapping & logging
-│   ├── templates/
-│   │   └── default.conf.template        # Dynamic virtual host envsubst template
-│   └── snippets/
-│       ├── cors.conf                    # Centralized CORS & OPTIONS 204 preflight handler
-│       ├── anti-spoofing.conf           # Anti-spoofing sanitization (strips client X-User-*)
-│       ├── auth-offload.conf            # Full perimeter auth offloading & claim injection
-│       ├── auth-offload-mutation.conf   # Mutation-only auth offloading for public read routes
-│       ├── proxy-params.conf            # Reverse proxy headers, connection reuse & trace ID
-│       └── security-headers.conf        # Defense-in-depth security response headers
-├── tests/
-│   ├── auth-flow.test.mjs               # E2E authentication offload and anti-spoofing tests
-│   └── gateway-spec.test.mjs            # NGINX configuration and route contract tests
-├── package.json                         # Automated test scripts and dependencies
-└── README.md                            # Comprehensive documentation & developer guide
-```
+The Sall-lah e-commerce platform is built as a distributed microservice architecture. Below is the complete catalog of ecosystem repositories:
 
+| Repository | Tech Stack | Role & Responsibility |
+| :--- | :--- | :--- |
+| [**`store_gateway`**](https://github.com/Sall-lah/store_gateway) | NGINX, Alpine Linux, Cloudflare Tunnel | Perimeter API Gateway, auth offloading, CORS handling, trace propagation, unified API docs proxy |
+| [**`store_auth`**](https://github.com/Sall-lah/store_auth) | Node.js, Express, RS256 JWT, Redis | Central identity provider, authentication, RS256 token issuance & JWKS key distribution |
+| [**`store_user`**](https://github.com/Sall-lah/store_user) | Go, Chi, PostgreSQL, Kafka | User profiles, account settings, GDPR deletion, notifications feed & preference management |
+| [**`store_product`**](https://github.com/Sall-lah/store_product) | Go, Chi, PostgreSQL, Kafka | Product catalog management, inventory tracking, category hierarchy, admin CRUD operations |
+| [**`store_order`**](https://github.com/Sall-lah/store_order) | Go, Chi, PostgreSQL, Midtrans, Kafka | Order lifecycle state machine, Midtrans Snap token generation, webhooks, Transactional Outbox |
+| [**`store_notification`**](https://github.com/Sall-lah/store_notification) | Go / Node.js, Kafka, WebSockets / SMTP | Asynchronous event notifications (order updates, user status, email & real-time alerts) |
+| [**`store_proto`**](https://github.com/Sall-lah/store_proto) | Protocol Buffers, gRPC | Shared protobuf schemas, gRPC service contracts, and generated language bindings |
+
+### Quick Access Links
+- 🔐 **Auth Service**: [https://github.com/Sall-lah/store_auth](https://github.com/Sall-lah/store_auth)
+- 👤 **User Service**: [https://github.com/Sall-lah/store_user](https://github.com/Sall-lah/store_user)
+- 📦 **Product Service**: [https://github.com/Sall-lah/store_product](https://github.com/Sall-lah/store_product)
+- 💳 **Order Service**: [https://github.com/Sall-lah/store_order](https://github.com/Sall-lah/store_order)
+- 🔔 **Notification Service**: [https://github.com/Sall-lah/store_notification](https://github.com/Sall-lah/store_notification)
+- 📑 **Protobuf Contracts**: [https://github.com/Sall-lah/store_proto](https://github.com/Sall-lah/store_proto)
+- 🚪 **API Gateway**: [https://github.com/Sall-lah/store_gateway](https://github.com/Sall-lah/store_gateway)
