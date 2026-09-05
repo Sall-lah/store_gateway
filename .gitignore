@@ -10,7 +10,7 @@
 graphify-out
 
 # Documentation & planning
-openspec/
+openspec
 
 # OS & Editor files
 .DS_Store
