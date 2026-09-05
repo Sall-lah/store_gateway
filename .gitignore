@@ -9,6 +9,9 @@
 .agent/
 graphify-out
 
+# Documentation & planning
+openspec/
+
 # OS & Editor files
 .DS_Store
 Thumbs.db
